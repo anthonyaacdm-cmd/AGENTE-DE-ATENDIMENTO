@@ -1,0 +1,21 @@
+import { defineConfig } from "wxt";
+import vue from "@vitejs/plugin-vue";
+
+export default defineConfig({
+  manifestVersion: 3,
+  extensionApi: "chrome",
+  vite: () => ({
+    plugins: [vue()],
+  }),
+  manifest: {
+    name: "Agente de Atendimento",
+    description: "Gera sugestões de resposta inteligentes para plataformas de atendimento",
+    version: "1.0.0",
+    permissions: ["storage", "activeTab", "scripting"],
+    host_permissions: ["http://localhost:8000/*", "<all_urls>"],
+    action: {
+      default_title: "Agente de Atendimento",
+      default_popup: "popup.html",
+    },
+  },
+});
