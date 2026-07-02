@@ -79,10 +79,11 @@ class QdrantService:
         if not self._ready:
             return []
         try:
-            results = self.client.search(
+            results = self.client.query_points(
                 collection_name=self.collection_name,
-                query_vector=query_embedding,
+                query=query_embedding,
                 limit=limit,
+                with_payload=True,
             )
             return [
                 KnowledgeSearchResult(
@@ -92,7 +93,7 @@ class QdrantService:
                     score=res.score,
                     category=res.payload.get("category", ""),
                 )
-                for res in results
+                for res in results.points
             ]
         except Exception as e:
             print(f"[Qdrant] Search error: {e}")
