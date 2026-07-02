@@ -26,7 +26,7 @@ const activeTab = ref<"gerar" | "conhecimento" | "config">("gerar");
 const loading = ref(false);
 const suggestion = ref<Suggestion | null>(null);
 const health = ref<HealthStatus | null>(null);
-const serverUrl = ref("http://localhost:8000");
+const serverUrl = ref("https://agente-de-atendimento.onrender.com");
 const conversationText = ref("");
 const ticketTitle = ref("");
 
@@ -148,6 +148,7 @@ async function addKnowledge() {
 
 async function saveServerUrl() {
   await browser.storage.local.set({ serverUrl: serverUrl.value });
+  await browser.runtime.sendMessage({ type: "SET_SERVER_URL", url: serverUrl.value });
   checkHealth();
 }
 </script>
@@ -262,7 +263,7 @@ async function saveServerUrl() {
       <h2>Configuração</h2>
       <div class="field">
         <label>URL do servidor</label>
-        <input v-model="serverUrl" placeholder="http://localhost:8000" />
+        <input v-model="serverUrl" placeholder="https://agente-de-atendimento.onrender.com" />
       </div>
       <button class="btn-primary" @click="saveServerUrl">Salvar</button>
 

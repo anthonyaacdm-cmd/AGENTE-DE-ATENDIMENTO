@@ -1,6 +1,7 @@
 import { defineBackground } from "wxt/sandbox";
 
-const API_BASE = "http://localhost:8000/api/v1";
+const DEFAULT_API_BASE = "https://agente-de-atendimento.onrender.com/api/v1";
+let API_BASE = DEFAULT_API_BASE;
 
 interface ConversationTurn {
   author: string;
@@ -10,6 +11,12 @@ interface ConversationTurn {
 
 export default defineBackground({
   main() {
+    browser.storage.local.get("serverUrl").then((saved: any) => {
+      if (saved.serverUrl) {
+        API_BASE = saved.serverUrl.replace(/\/+$/, "") + "/api/v1";
+      }
+    });
+
     browser.runtime.onMessage.addListener(async (message: any) => {
       switch (message.type) {
         case "GENERATE_RESPONSE":
@@ -22,6 +29,9 @@ export default defineBackground({
           return handleFetchPageText();
         case "GET_HEALTH":
           return handleHealth();
+        case "SET_SERVER_URL":
+          API_BASE = message.url.replace(/\/+$/, "") + "/api/v1";
+          return { ok: true };
         default:
           return { error: "unknown_type" };
       }
