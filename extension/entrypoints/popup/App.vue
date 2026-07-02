@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 
-// ─── Types ──────────────────────────────────────────────
 interface ConversationTurn {
   author: string;
   message: string;
@@ -21,8 +20,16 @@ interface HealthStatus {
   ai: boolean;
 }
 
-// ─── State ──────────────────────────────────────────────
-const activeTab = ref<"gerar" | "conhecimento" | "config">("gerar");
+interface KnowledgeItem {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  tags: string[];
+  source_url?: string;
+}
+
+const activeTab = ref<"gerar" | "conhecimento" | "consultar" | "config">("gerar");
 const loading = ref(false);
 const suggestion = ref<Suggestion | null>(null);
 const health = ref<HealthStatus | null>(null);
@@ -30,21 +37,27 @@ const serverUrl = ref("https://agente-de-atendimento.onrender.com");
 const conversationText = ref("");
 const ticketTitle = ref("");
 
-// Knowledge form
+const incomingAttachmentText = ref("");
+
 const kTitle = ref("");
 const kContent = ref("");
 const kCategory = ref("geral");
 const kTags = ref("");
 const kMessage = ref("");
 
-// ─── Lifecycle ──────────────────────────────────────────
+const consultList = ref<KnowledgeItem[]>([]);
+const consultTotal = ref(0);
+const consultQuery = ref("");
+const consultLoading = ref(false);
+const consultEditing = ref<KnowledgeItem | null>(null);
+const consultError = ref("");
+
 onMounted(async () => {
   const saved = await browser.storage.local.get("serverUrl");
   if (saved.serverUrl) serverUrl.value = saved.serverUrl;
   checkHealth();
 });
 
-// ─── Methods ────────────────────────────────────────────
 async function checkHealth() {
   try {
     const res = await browser.runtime.sendMessage({ type: "GET_HEALTH" });
@@ -76,6 +89,7 @@ async function generateSuggestion() {
       payload: {
         conversation: turns,
         ticketTitle: ticketTitle.value,
+        attachmentText: incomingAttachmentText.value,
       },
     });
     suggestion.value = result as Suggestion;
@@ -119,6 +133,46 @@ function copyText(text: string) {
   navigator.clipboard.writeText(text);
 }
 
+async function attachFileToGenerate(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (!input.files?.length) return;
+  const file = input.files[0];
+  await processAttachment(file, (text) => {
+    incomingAttachmentText.value = text;
+  });
+  input.value = "";
+}
+
+async function attachFileToKnowledge(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (!input.files?.length) return;
+  const file = input.files[0];
+  await processAttachment(file, (text) => {
+    kContent.value = text;
+  });
+  input.value = "";
+}
+
+async function processAttachment(file: File, callback: (text: string) => void) {
+  try {
+    const buffer = await file.arrayBuffer();
+    const result = await browser.runtime.sendMessage({
+      type: "EXTRACT_TEXT",
+      fileData: buffer,
+      fileName: file.name,
+    });
+    if (result.error) {
+      kMessage.value = `Erro no anexo: ${result.error}`;
+      return;
+    }
+    if (result.text) {
+      callback(result.text);
+    }
+  } catch (err: any) {
+    kMessage.value = `Erro ao processar anexo: ${err.message}`;
+  }
+}
+
 async function addKnowledge() {
   if (!kTitle.value || !kContent.value) return;
   kMessage.value = "";
@@ -146,6 +200,81 @@ async function addKnowledge() {
   }
 }
 
+async function loadConsultList() {
+  consultLoading.value = true;
+  consultError.value = "";
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: "LIST_KNOWLEDGE",
+      query: consultQuery.value,
+      offset: 0,
+      limit: 200,
+    });
+    if (result.error) {
+      consultError.value = result.error;
+      consultList.value = [];
+    } else {
+      consultList.value = result.results || [];
+      consultTotal.value = result.total || 0;
+    }
+  } catch (err: any) {
+    consultError.value = `Erro: ${err.message}`;
+    consultList.value = [];
+  } finally {
+    consultLoading.value = false;
+  }
+}
+
+function startEdit(item: KnowledgeItem) {
+  consultEditing.value = { ...item };
+}
+
+function cancelEdit() {
+  consultEditing.value = null;
+}
+
+async function saveEdit() {
+  if (!consultEditing.value) return;
+  const item = consultEditing.value;
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: "UPDATE_KNOWLEDGE",
+      id: item.id,
+      payload: {
+        title: item.title,
+        content: item.content,
+        category: item.category,
+        tags: item.tags,
+      },
+    });
+    if (result.error) {
+      consultError.value = result.error;
+    } else {
+      consultEditing.value = null;
+      await loadConsultList();
+    }
+  } catch (err: any) {
+    consultError.value = `Erro: ${err.message}`;
+  }
+}
+
+async function deleteKnowledge(id: string) {
+  if (!confirm("Tem certeza que deseja excluir este conhecimento?")) return;
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: "DELETE_KNOWLEDGE",
+      id,
+    });
+    if (result.error) {
+      consultError.value = result.error;
+    } else {
+      await loadConsultList();
+    }
+  } catch (err: any) {
+    consultError.value = `Erro: ${err.message}`;
+  }
+}
+
 async function saveServerUrl() {
   await browser.storage.local.set({ serverUrl: serverUrl.value });
   await browser.runtime.sendMessage({ type: "SET_SERVER_URL", url: serverUrl.value });
@@ -155,22 +284,13 @@ async function saveServerUrl() {
 
 <template>
   <div class="app">
-    <!-- Header -->
     <div class="header">
       <h1>Agente de Atendimento</h1>
       <div class="tabs">
-        <button
-          :class="{ active: activeTab === 'gerar' }"
-          @click="activeTab = 'gerar'"
-        >Gerar</button>
-        <button
-          :class="{ active: activeTab === 'conhecimento' }"
-          @click="activeTab = 'conhecimento'"
-        >Conhecimento</button>
-        <button
-          :class="{ active: activeTab === 'config' }"
-          @click="activeTab = 'config'"
-        >Config</button>
+        <button :class="{ active: activeTab === 'gerar' }" @click="activeTab = 'gerar'">Gerar</button>
+        <button :class="{ active: activeTab === 'conhecimento' }" @click="activeTab = 'conhecimento'">Conhecimento</button>
+        <button :class="{ active: activeTab === 'consultar' }" @click="activeTab = 'consultar'; loadConsultList()">Consultar</button>
+        <button :class="{ active: activeTab === 'config' }" @click="activeTab = 'config'">Config</button>
       </div>
     </div>
 
@@ -185,12 +305,23 @@ async function saveServerUrl() {
         <label>Conversa</label>
         <div class="textarea-actions">
           <button class="btn-sm" @click="fetchPageText">Capturar da página</button>
+          <label class="btn-sm btn-file">
+            Anexar arquivo
+            <input type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.gif,.bmp,.webp" @change="attachFileToGenerate" hidden />
+          </label>
         </div>
         <textarea
           v-model="conversationText"
-          placeholder="Cole a conversa aqui...&#10;Formato:&#10;Aluno: Preciso de ajuda&#10;Atendente: Claro, como posso ajudar?"
+          placeholder='Cole a conversa aqui...
+Formato:
+Aluno: Preciso de ajuda
+Atendente: Claro, como posso ajudar?'
           rows="8"
         ></textarea>
+      </div>
+
+      <div v-if="incomingAttachmentText" class="attachment-badge">
+        <strong>Anexo processado:</strong> {{ incomingAttachmentText.slice(0, 100) }}...
       </div>
 
       <button
@@ -235,7 +366,13 @@ async function saveServerUrl() {
         <input v-model="kTitle" placeholder="Título do artigo" />
       </div>
       <div class="field">
-        <label>Conteúdo</label>
+        <div class="textarea-actions">
+          <label>Conteúdo</label>
+          <label class="btn-sm btn-file">
+            Anexar arquivo
+            <input type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.gif,.bmp,.webp" @change="attachFileToKnowledge" hidden />
+          </label>
+        </div>
         <textarea v-model="kContent" rows="5" placeholder="Conteúdo do conhecimento..."></textarea>
       </div>
       <div class="field-row">
@@ -247,6 +384,7 @@ async function saveServerUrl() {
             <option value="financeiro">Financeiro</option>
             <option value="tecnico">Técnico</option>
             <option value="academico">Acadêmico</option>
+            <option value="secretaria">Secretaria</option>
           </select>
         </div>
         <div class="field flex-1">
@@ -256,6 +394,71 @@ async function saveServerUrl() {
       </div>
       <button class="btn-primary" @click="addKnowledge">Adicionar</button>
       <p v-if="kMessage" class="feedback">{{ kMessage }}</p>
+    </div>
+
+    <!-- Tab: Consultar -->
+    <div v-if="activeTab === 'consultar'" class="tab-content">
+      <h2>Consultar Conhecimentos</h2>
+      <div class="search-row">
+        <input v-model="consultQuery" placeholder="Pesquisar..." @keyup.enter="loadConsultList" />
+        <button class="btn-sm" @click="loadConsultList">Buscar</button>
+      </div>
+
+      <div v-if="consultLoading" class="loading">Carregando...</div>
+      <div v-if="consultError" class="error">{{ consultError }}</div>
+
+      <!-- Edit form -->
+      <div v-if="consultEditing" class="edit-card">
+        <h3>Editar: {{ consultEditing.title }}</h3>
+        <div class="field">
+          <label>Título</label>
+          <input v-model="consultEditing.title" />
+        </div>
+        <div class="field">
+          <label>Conteúdo</label>
+          <textarea v-model="consultEditing.content" rows="4"></textarea>
+        </div>
+        <div class="field-row">
+          <div class="field flex-1">
+            <label>Categoria</label>
+            <select v-model="consultEditing.category">
+              <option value="geral">Geral</option>
+              <option value="matricula">Matrícula</option>
+              <option value="financeiro">Financeiro</option>
+              <option value="tecnico">Técnico</option>
+              <option value="academico">Acadêmico</option>
+              <option value="secretaria">Secretaria</option>
+            </select>
+          </div>
+          <div class="field flex-1">
+            <label>Tags (vírgulas)</label>
+            <input v-model="consultEditing.tags" :value="consultEditing.tags.join(', ')" @input="(e: any) => consultEditing!.tags = (e.target as HTMLInputElement).value.split(',').map((t: string) => t.trim())" />
+          </div>
+        </div>
+        <div class="edit-actions">
+          <button class="btn-sm btn-save" @click="saveEdit">Salvar</button>
+          <button class="btn-sm btn-cancel" @click="cancelEdit">Cancelar</button>
+        </div>
+      </div>
+
+      <!-- Knowledge list -->
+      <div v-if="!consultLoading && !consultEditing" class="knowledge-list">
+        <div v-if="consultList.length === 0" class="empty">Nenhum conhecimento encontrado.</div>
+        <div v-for="item in consultList" :key="item.id" class="knowledge-card">
+          <div class="k-header">
+            <strong>{{ item.title }}</strong>
+            <span class="k-category">{{ item.category }}</span>
+          </div>
+          <div class="k-content">{{ item.content.slice(0, 120) }}{{ item.content.length > 120 ? '...' : '' }}</div>
+          <div class="k-tags">
+            <span v-for="tag in item.tags" :key="tag" class="k-tag">{{ tag }}</span>
+          </div>
+          <div class="k-actions">
+            <button class="btn-sm btn-edit" @click="startEdit(item)">Editar</button>
+            <button class="btn-sm btn-del" @click="deleteKnowledge(item.id)">Excluir</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Tab: Config -->
@@ -358,6 +561,7 @@ function confidenceLevel(score: number): string {
   background: white;
   color: #1e293b;
   transition: border-color 0.2s;
+  box-sizing: border-box;
 }
 
 .field input:focus,
@@ -383,7 +587,14 @@ function confidenceLevel(score: number): string {
 }
 
 .textarea-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 6px;
+}
+
+.textarea-actions label {
+  margin-bottom: 0;
 }
 
 .btn-sm {
@@ -399,6 +610,11 @@ function confidenceLevel(score: number): string {
 
 .btn-sm:hover {
   background: #cbd5e1;
+}
+
+.btn-file {
+  display: inline-block;
+  cursor: pointer;
 }
 
 .btn-primary {
@@ -498,6 +714,7 @@ function confidenceLevel(score: number): string {
   padding: 8px;
   background: #fef2f2;
   border-radius: 6px;
+  margin-bottom: 8px;
 }
 
 .feedback {
@@ -531,5 +748,133 @@ h2 {
   font-size: 14px;
   margin-bottom: 12px;
   color: #1e293b;
+}
+
+h3 {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.attachment-badge {
+  padding: 6px 10px;
+  background: #fef9c3;
+  border: 1px solid #facc15;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #854d0e;
+  margin-bottom: 8px;
+}
+
+.search-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.search-row input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.search-row input:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+
+.loading {
+  text-align: center;
+  color: #64748b;
+  padding: 20px;
+  font-size: 13px;
+}
+
+.empty {
+  text-align: center;
+  color: #94a3b8;
+  padding: 20px;
+  font-size: 13px;
+}
+
+.knowledge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.knowledge-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+}
+
+.k-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.k-header strong {
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.k-category {
+  font-size: 10px;
+  background: #e0e7ff;
+  color: #4338ca;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.k-content {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.k-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.k-tag {
+  font-size: 10px;
+  background: #f1f5f9;
+  color: #64748b;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.k-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-edit { background: #e0e7ff; color: #4338ca; }
+.btn-del { background: #fee2e2; color: #dc2626; }
+.btn-save { background: #dcfce7; color: #166534; }
+.btn-cancel { background: #e2e8f0; color: #475569; }
+
+.edit-card {
+  border: 2px solid #4f46e5;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: #f8fafc;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
 }
 </style>

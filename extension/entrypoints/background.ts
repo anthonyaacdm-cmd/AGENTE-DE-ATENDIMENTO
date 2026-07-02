@@ -32,6 +32,16 @@ export default defineBackground({
         case "SET_SERVER_URL":
           API_BASE = message.url.replace(/\/+$/, "") + "/api/v1";
           return { ok: true };
+        case "EXTRACT_TEXT":
+          return handleExtractText(message.fileData, message.fileName);
+        case "LIST_KNOWLEDGE":
+          return handleListKnowledge(message.query, message.offset, message.limit);
+        case "GET_KNOWLEDGE":
+          return handleGetKnowledge(message.id);
+        case "UPDATE_KNOWLEDGE":
+          return handleUpdateKnowledge(message.id, message.payload);
+        case "DELETE_KNOWLEDGE":
+          return handleDeleteKnowledge(message.id);
         default:
           return { error: "unknown_type" };
       }
@@ -59,15 +69,34 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
 }
 
+async function apiUpload(path: string, fileData: ArrayBuffer, fileName: string) {
+  const url = `${API_BASE}${path}`;
+  try {
+    const form = new FormData();
+    const blob = new Blob([fileData]);
+    form.append("file", blob, fileName);
+    const res = await fetch(url, { method: "POST", body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      return { error: err.detail || `HTTP ${res.status}` };
+    }
+    return await res.json();
+  } catch (e: any) {
+    return { error: `Erro no upload: ${e.message}` };
+  }
+}
+
 async function handleGenerate(payload: {
   conversation: ConversationTurn[];
   ticketTitle?: string;
+  attachmentText?: string;
 }) {
   return apiFetch("/generate", {
     method: "POST",
     body: JSON.stringify({
       conversation: payload.conversation,
       ticket_title: payload.ticketTitle || "",
+      attachment_text: payload.attachmentText || "",
     }),
   });
 }
@@ -90,9 +119,7 @@ async function handleAddKnowledge(payload: {
 }
 
 async function handleSearchKnowledge(payload: { query: string }) {
-  return apiFetch(
-    `/knowledge/search?query=${encodeURIComponent(payload.query)}`
-  );
+  return apiFetch(`/knowledge/search?query=${encodeURIComponent(payload.query)}`);
 }
 
 async function handleFetchPageText() {
@@ -116,4 +143,29 @@ async function handleFetchPageText() {
 
 async function handleHealth() {
   return apiFetch("/health");
+}
+
+async function handleExtractText(fileData: ArrayBuffer, fileName: string) {
+  return apiUpload("/knowledge/extract", fileData, fileName);
+}
+
+async function handleListKnowledge(query: string, offset: number, limit: number) {
+  let path = `/knowledge?offset=${offset}&limit=${limit}`;
+  if (query) path += `&query=${encodeURIComponent(query)}`;
+  return apiFetch(path);
+}
+
+async function handleGetKnowledge(id: string) {
+  return apiFetch(`/knowledge/${encodeURIComponent(id)}`);
+}
+
+async function handleUpdateKnowledge(id: string, payload: any) {
+  return apiFetch(`/knowledge/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function handleDeleteKnowledge(id: string) {
+  return apiFetch(`/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
