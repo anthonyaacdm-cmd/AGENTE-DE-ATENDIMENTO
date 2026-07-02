@@ -1,0 +1,62 @@
+[
+  {
+    "title": "Prazo de Matrícula 2026.2",
+    "content": "O período de matrícula para o semestre 2026.2 vai de 01 a 15 de agosto de 2026. A taxa de matrícula é de R$ 150,00. Matrículas fora do prazo pagam multa de R$ 50,00.",
+    "category": "matricula",
+    "tags": ["matricula", "prazo", "taxa"]
+  },
+  {
+    "title": "Cancelamento de Matrícula",
+    "content": "O cancelamento pode ser solicitado em até 30 dias após o início do semestre. Taxa de cancelamento: R$ 80,00. Após 30 dias, é necessário abrir um processo de desistência formal.",
+    "category": "matricula",
+    "tags": ["cancelamento", "matricula", "desistencia"]
+  },
+  {
+    "title": "Rematrícula Automática",
+    "content": "Alunos regulares têm rematrícula automática garantida. O boleto da taxa de rematrícula (R$ 120,00) é enviado por e-mail até 15 dias antes do vencimento.",
+    "category": "matricula",
+    "tags": ["rematricula", "automatica", "boleto"]
+  },
+  {
+    "title": "Solicitação de Histórico Escolar",
+    "content": "O histórico escolar pode ser solicitado pela secretaria online. Prazo de emissão: 5 dias úteis. Taxa: R$ 30,00 por via. Alunos carentes têm isenção mediante comprovante.",
+    "category": "secretaria",
+    "tags": ["historico", "secretaria", "taxa"]
+  },
+  {
+    "title": "Segunda Via de Diploma",
+    "content": "A solicitação de segunda via de diploma custa R$ 200,00. Prazo de emissão: 30 dias úteis. Necessário apresentar BO em caso de perda ou roubo.",
+    "category": "secretaria",
+    "tags": ["diploma", "segunda via", "secretaria"]
+  },
+  {
+    "title": "Bolsa de Estudos - Mérito Acadêmico",
+    "content": "Alunos com média geral acima de 8,5 podem solicitar bolsa de mérito acadêmico. Desconto de 50% na mensalidade. Inscrições semestrais. Limite de 10 bolsas por curso.",
+    "category": "financeiro",
+    "tags": ["bolsa", "merito", "desconto"]
+  },
+  {
+    "title": "Bolsa de Estudos - ProUni",
+    "content": "A instituição aceita ProUni para cursos de graduação. Bolsas parciais (50%) e integrais (100%). Processo seletivo pelo site do MEC. Nota mínima do ENEM: 450 pontos.",
+    "category": "financeiro",
+    "tags": ["prouni", "bolsa", "enem"]
+  },
+  {
+    "title": "Calendário Acadêmico 2026",
+    "content": "Início do semestre 2026.2: 01 de setembro. Fim do semestre: 20 de dezembro. Recesso acadêmico: 22/12 a 31/01. Provas finais: 10 a 20 de dezembro.",
+    "category": "academico",
+    "tags": ["calendario", "semestre", "recesso"]
+  },
+  {
+    "title": "Trancamento de Curso",
+    "content": "O trancamento de curso pode ser solicitado a qualquer momento, desde que não haja pendências financeiras. Prazo máximo de trancamento: 2 semestres consecutivos. Taxa de trancamento: R$ 60,00.",
+    "category": "matricula",
+    "tags": ["trancamento", "curso", "prazo"]
+  },
+  {
+    "title": "Reintegração ao Curso",
+    "content": "Alunos que trancaram o curso podem solicitar reintegração até 30 dias antes do início do semestre. Necessário protocolar requerimento na secretaria. Análise em até 10 dias úteis.",
+    "category": "matricula",
+    "tags": ["reintegracao", "curso", "volta"]
+  }
+]

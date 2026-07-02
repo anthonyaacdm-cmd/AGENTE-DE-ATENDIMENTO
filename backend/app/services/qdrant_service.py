@@ -124,6 +124,13 @@ class QdrantService:
             print(f"[Qdrant] List error: {e}")
             return []
 
+    def count_points(self) -> int:
+        try:
+            result = self.client.count(collection_name=self.collection_name)
+            return result.count
+        except Exception:
+            return 0
+
     def delete_point(self, point_id: str):
         self.ensure_collection()
         self.client.delete(
