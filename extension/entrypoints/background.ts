@@ -69,11 +69,12 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
 }
 
-async function apiUpload(path: string, fileData: ArrayBuffer, fileName: string) {
+async function apiUpload(path: string, fileData: number[], fileName: string) {
   const url = `${API_BASE}${path}`;
   try {
     const form = new FormData();
-    const blob = new Blob([fileData]);
+    const bytes = new Uint8Array(fileData);
+    const blob = new Blob([bytes]);
     form.append("file", blob, fileName);
     const res = await fetch(url, { method: "POST", body: form });
     if (!res.ok) {
@@ -145,7 +146,7 @@ async function handleHealth() {
   return apiFetch("/health");
 }
 
-async function handleExtractText(fileData: ArrayBuffer, fileName: string) {
+async function handleExtractText(fileData: number[], fileName: string) {
   return apiUpload("/knowledge/extract", fileData, fileName);
 }
 

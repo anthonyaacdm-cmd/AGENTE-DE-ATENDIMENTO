@@ -48,12 +48,22 @@ def _extract_txt(content: bytes) -> dict:
 def _extract_pdf(content: bytes) -> dict:
     try:
         import fitz
+        if not content.startswith(b"%PDF"):
+            return {"text": "", "format": "pdf", "error": "Arquivo não parece ser um PDF válido"}
         doc = fitz.open(stream=content, filetype="pdf")
+        if doc.is_encrypted:
+            doc.close()
+            return {"text": "", "format": "pdf", "error": "PDF protegido por senha. Remova a senha e tente novamente."}
         pages = []
         for page in doc:
             pages.append(page.get_text())
         doc.close()
-        return {"text": "\n\n".join(pages), "format": "pdf"}
+        text = "\n\n".join(pages).strip()
+        if not text:
+            return {"text": "", "format": "pdf", "error": "Não foi possível extrair texto deste PDF. Pode ser um PDF escaneado (imagem)."}
+        return {"text": text, "format": "pdf"}
+    except RuntimeError as e:
+        return {"text": "", "format": "pdf", "error": f"Falha ao processar PDF: {e}. Verifique se o arquivo não está corrompido."}
     except Exception as e:
         return {"text": "", "format": "pdf", "error": f"Erro ao extrair PDF: {e}"}
 

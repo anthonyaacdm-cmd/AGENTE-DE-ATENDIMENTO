@@ -154,11 +154,17 @@ async function attachFileToKnowledge(event: Event) {
 }
 
 async function processAttachment(file: File, callback: (text: string) => void) {
+  const MAX_SIZE = 10 * 1024 * 1024;
+  if (file.size > MAX_SIZE) {
+    kMessage.value = "Arquivo muito grande. Máximo: 10 MB.";
+    return;
+  }
   try {
     const buffer = await file.arrayBuffer();
+    const bytes = Array.from(new Uint8Array(buffer));
     const result = await browser.runtime.sendMessage({
       type: "EXTRACT_TEXT",
-      fileData: buffer,
+      fileData: bytes,
       fileName: file.name,
     });
     if (result.error) {
@@ -167,6 +173,8 @@ async function processAttachment(file: File, callback: (text: string) => void) {
     }
     if (result.text) {
       callback(result.text);
+    } else {
+      kMessage.value = "Nenhum texto extraído do arquivo.";
     }
   } catch (err: any) {
     kMessage.value = `Erro ao processar anexo: ${err.message}`;

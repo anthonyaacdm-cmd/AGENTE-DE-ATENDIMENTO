@@ -1,6 +1,6 @@
 import logging
 import traceback
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query, status
 from app.models.schemas import (
     GenerateRequest, GenerateResponse, KnowledgeEntry,
     KnowledgeSearchResult, KnowledgeCreateResponse, ErrorResponse,
@@ -149,6 +149,10 @@ async def extract_file_text(file: UploadFile = File(...)):
             status_code=400,
             detail=f"Formato não suportado: {file.filename}. Use PDF, DOCX, TXT, PNG, JPG, GIF, BMP ou WEBP.",
         )
+
+    MAX_SIZE = 10 * 1024 * 1024
+    if file.size and file.size > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="Arquivo muito grande. Máximo: 10 MB.")
 
     try:
         content = await file.read()
