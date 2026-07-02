@@ -9,7 +9,7 @@ import os
 class QdrantService:
     def __init__(self):
         self.collection_name = settings.collection_name
-        self.vector_size = 1536
+        self.vector_size = 3072
         self._ready = False
         self._local = False
         self.client = self._create_client()

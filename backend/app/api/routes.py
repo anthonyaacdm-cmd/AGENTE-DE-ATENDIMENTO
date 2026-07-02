@@ -26,7 +26,7 @@ async def generate_response(request: GenerateRequest):
     if not rag_service.is_ready():
         raise HTTPException(
             status_code=503,
-            detail="IA não configurada. Defina OPENAI_API_KEY no .env do servidor",
+            detail="IA não configurada. Defina GEMINI_API_KEY no .env do servidor",
         )
 
     if not qdrant_service.is_ready():
