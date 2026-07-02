@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
 
 
 class ConversationTurn(BaseModel):
@@ -13,6 +12,7 @@ class GenerateRequest(BaseModel):
     conversation: List[ConversationTurn]
     ticket_title: Optional[str] = ""
     platform: Optional[str] = ""
+    attachment_text: Optional[str] = ""
 
 
 class GenerateResponse(BaseModel):
@@ -38,9 +38,41 @@ class KnowledgeSearchResult(BaseModel):
     score: float
     category: str
 
+
+class KnowledgeDetail(BaseModel):
+    id: str
+    title: str
+    content: str
+    category: str
+    tags: List[str] = []
+    source_url: Optional[str] = None
+
+
 class KnowledgeCreateResponse(BaseModel):
     id: str
     message: str
+
+
+class KnowledgeListResponse(BaseModel):
+    results: List[KnowledgeDetail]
+    total: int
+    offset: int
+    limit: int
+
+
+class KnowledgeUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    source_url: Optional[str] = None
+
+
+class ExtractTextResponse(BaseModel):
+    text: str
+    format: str
+    error: Optional[str] = None
+
 
 class ErrorResponse(BaseModel):
     detail: str

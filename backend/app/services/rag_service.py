@@ -21,7 +21,10 @@ Conhecimento relevante:
 {knowledge_context}
 
 Histórico da conversa:
-{conversation_history}"""
+{conversation_history}
+
+Conteúdo extraído de anexo:
+{attachment_context}"""
 
 
 class RAGService:
@@ -80,7 +83,8 @@ class RAGService:
         return "\n\n---\n\n".join(parts)
 
     async def generate_response(
-        self, conversation: list[ConversationTurn], ticket_title: str = ""
+        self, conversation: list[ConversationTurn], ticket_title: str = "",
+        attachment_text: str = "",
     ) -> GenerateResponse:
         if not self._ready:
             return GenerateResponse(
@@ -97,13 +101,15 @@ class RAGService:
         knowledge_results = qdrant_service.search(query_embedding, limit=5)
 
         knowledge_context = self._format_knowledge(knowledge_results)
+        attachment_context = attachment_text if attachment_text else "Nenhum anexo."
 
         response = await self.chain.ainvoke({
             "knowledge_context": knowledge_context,
             "conversation_history": conversation_text,
+            "attachment_context": attachment_context,
             "input": (
                 f"Título do ticket: {ticket_title}\n\n"
-                f"Com base na conversa e no conhecimento disponível, "
+                f"Com base na conversa, no anexo e no conhecimento disponível, "
                 f"gere uma resposta sugerida para o atendente."
             ),
         })

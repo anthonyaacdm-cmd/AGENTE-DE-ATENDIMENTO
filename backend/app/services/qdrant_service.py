@@ -1,7 +1,7 @@
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 from app.core.config import settings
-from app.models.schemas import KnowledgeEntry, KnowledgeSearchResult
+from app.models.schemas import KnowledgeEntry, KnowledgeSearchResult, KnowledgeDetail
 import uuid
 import os
 
@@ -99,7 +99,7 @@ class QdrantService:
             print(f"[Qdrant] Search error: {e}")
             return []
 
-    def list_all(self, limit: int = 50) -> list[KnowledgeSearchResult]:
+    def list_all(self, limit: int = 50, offset: int = 0) -> list[KnowledgeDetail]:
         self.ensure_collection()
         if not self._ready:
             return []
@@ -107,22 +107,68 @@ class QdrantService:
             results = self.client.scroll(
                 collection_name=self.collection_name,
                 limit=limit,
+                offset=offset,
                 with_payload=True,
                 with_vectors=False,
             )
             return [
-                KnowledgeSearchResult(
+                KnowledgeDetail(
                     id=str(p.id),
                     title=p.payload.get("title", ""),
                     content=p.payload.get("content", ""),
-                    score=1.0,
                     category=p.payload.get("category", ""),
+                    tags=p.payload.get("tags", []),
+                    source_url=p.payload.get("source_url"),
                 )
                 for p in results[0]
             ]
         except Exception as e:
             print(f"[Qdrant] List error: {e}")
             return []
+
+    def get_point(self, point_id: str) -> KnowledgeDetail | None:
+        self.ensure_collection()
+        try:
+            results = self.client.retrieve(
+                collection_name=self.collection_name,
+                ids=[point_id],
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not results:
+                return None
+            p = results[0]
+            return KnowledgeDetail(
+                id=str(p.id),
+                title=p.payload.get("title", ""),
+                content=p.payload.get("content", ""),
+                category=p.payload.get("category", ""),
+                tags=p.payload.get("tags", []),
+                source_url=p.payload.get("source_url"),
+            )
+        except Exception as e:
+            print(f"[Qdrant] Get point error: {e}")
+            return None
+
+    def update_point(self, point_id: str, entry: KnowledgeEntry, embedding: list[float] | None = None):
+        self.ensure_collection()
+        payload = {
+            "title": entry.title,
+            "content": entry.content,
+            "category": entry.category,
+            "tags": entry.tags,
+            "source_url": entry.source_url,
+        }
+        self.client.set_payload(
+            collection_name=self.collection_name,
+            payload=payload,
+            points=[point_id],
+        )
+        if embedding:
+            self.client.update_vectors(
+                collection_name=self.collection_name,
+                points=[models.PointStruct(id=point_id, vector=embedding, payload={})],
+            )
 
     def count_points(self) -> int:
         try:

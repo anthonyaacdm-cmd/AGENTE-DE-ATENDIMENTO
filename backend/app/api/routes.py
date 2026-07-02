@@ -1,12 +1,15 @@
 import logging
 import traceback
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from app.models.schemas import (
     GenerateRequest, GenerateResponse, KnowledgeEntry,
     KnowledgeSearchResult, KnowledgeCreateResponse, ErrorResponse,
+    KnowledgeListResponse, KnowledgeDetail, KnowledgeUpdateRequest,
+    ExtractTextResponse,
 )
 from app.services.rag_service import rag_service
 from app.services.qdrant_service import qdrant_service
+from app.services.file_extraction import extract_text, is_supported
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,6 +42,7 @@ async def generate_response(request: GenerateRequest):
         result = await rag_service.generate_response(
             conversation=request.conversation,
             ticket_title=request.ticket_title or "",
+            attachment_text=request.attachment_text or "",
         )
         return result
     except Exception as e:
@@ -64,6 +68,24 @@ async def add_knowledge(entry: KnowledgeEntry):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/knowledge", response_model=KnowledgeListResponse)
+async def list_knowledge(
+    query: str = Query("", description="Busca textual"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+):
+    if query:
+        if not rag_service.is_ready():
+            raise HTTPException(status_code=503, detail="IA não configurada")
+        embedding = await rag_service.embeddings.aembed_query(query)
+        results = qdrant_service.search(embedding, limit=limit)
+        total = len(results)
+    else:
+        total = qdrant_service.count_points()
+        results = qdrant_service.list_all(limit=limit, offset=offset)
+    return KnowledgeListResponse(results=results, total=total, offset=offset, limit=limit)
+
+
 @router.get("/knowledge/search")
 async def search_knowledge(query: str = "", limit: int = 5):
     if query:
@@ -76,6 +98,38 @@ async def search_knowledge(query: str = "", limit: int = 5):
     return {"results": results}
 
 
+@router.get("/knowledge/{point_id}", response_model=KnowledgeDetail)
+async def get_knowledge(point_id: str):
+    result = qdrant_service.get_point(point_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Conhecimento não encontrado")
+    return result
+
+
+@router.put("/knowledge/{point_id}", response_model=KnowledgeCreateResponse)
+async def update_knowledge(point_id: str, update: KnowledgeUpdateRequest):
+    existing = qdrant_service.get_point(point_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Conhecimento não encontrado")
+
+    entry = KnowledgeEntry(
+        id=point_id,
+        title=update.title if update.title is not None else existing.title,
+        content=update.content if update.content is not None else existing.content,
+        category=update.category if update.category is not None else existing.category,
+        tags=update.tags if update.tags is not None else existing.tags,
+        source_url=update.source_url if update.source_url is not None else existing.source_url,
+    )
+
+    if update.content:
+        embedding = await rag_service.embeddings.aembed_query(entry.content)
+        qdrant_service.update_point(point_id, entry, embedding)
+    else:
+        qdrant_service.update_point(point_id, entry)
+
+    return KnowledgeCreateResponse(id=point_id, message="Conhecimento atualizado com sucesso")
+
+
 @router.delete("/knowledge/{point_id}")
 async def delete_knowledge(point_id: str):
     try:
@@ -83,6 +137,26 @@ async def delete_knowledge(point_id: str):
         return {"message": "Conhecimento removido"}
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Ponto não encontrado: {e}")
+
+
+@router.post("/knowledge/extract", response_model=ExtractTextResponse)
+async def extract_file_text(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Nenhum arquivo enviado")
+
+    if not is_supported(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato não suportado: {file.filename}. Use PDF, DOCX, TXT, PNG, JPG, GIF, BMP ou WEBP.",
+        )
+
+    try:
+        content = await file.read()
+        result = await extract_text(file.filename, content)
+        return ExtractTextResponse(**result)
+    except Exception as e:
+        logger.error(f"Extract error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/health")
