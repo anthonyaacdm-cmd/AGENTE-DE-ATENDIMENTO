@@ -1,3 +1,5 @@
+import logging
+import traceback
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import (
     GenerateRequest, GenerateResponse, KnowledgeEntry,
@@ -5,6 +7,9 @@ from app.models.schemas import (
 )
 from app.services.rag_service import rag_service
 from app.services.qdrant_service import qdrant_service
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -30,11 +35,15 @@ async def generate_response(request: GenerateRequest):
             detail="Banco de conhecimento (Qdrant) indisponível",
         )
 
-    result = await rag_service.generate_response(
-        conversation=request.conversation,
-        ticket_title=request.ticket_title or "",
-    )
-    return result
+    try:
+        result = await rag_service.generate_response(
+            conversation=request.conversation,
+            ticket_title=request.ticket_title or "",
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Generate error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post(
@@ -46,9 +55,13 @@ async def add_knowledge(entry: KnowledgeEntry):
     if not rag_service.is_ready():
         raise HTTPException(status_code=503, detail="IA não configurada")
 
-    embedding = await rag_service.embeddings.aembed_query(entry.content)
-    point_id = qdrant_service.upsert_knowledge(entry, embedding)
-    return KnowledgeCreateResponse(id=point_id, message="Conhecimento adicionado com sucesso")
+    try:
+        embedding = await rag_service.embeddings.aembed_query(entry.content)
+        point_id = qdrant_service.upsert_knowledge(entry, embedding)
+        return KnowledgeCreateResponse(id=point_id, message="Conhecimento adicionado com sucesso")
+    except Exception as e:
+        logger.error(f"Knowledge add error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/knowledge/search")
@@ -79,3 +92,19 @@ async def health():
         "qdrant": qdrant_service.is_ready(),
         "ai": rag_service.is_ready(),
     }
+
+
+@router.get("/debug/embedding")
+async def debug_embedding(text: str = "test"):
+    try:
+        embedding = await rag_service.embeddings.aembed_query(text)
+        return {"status": "ok", "embedding_length": len(embedding), "first_5": embedding[:5]}
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "embeddings_type": str(type(rag_service.embeddings)),
+            "embeddings_repr": repr(rag_service.embeddings),
+            "gemini_key_set": bool(settings.gemini_api_key),
+            "traceback": traceback.format_exc(),
+        }
