@@ -42,6 +42,8 @@ export default defineBackground({
           return handleUpdateKnowledge(message.id, message.payload);
         case "DELETE_KNOWLEDGE":
           return handleDeleteKnowledge(message.id);
+        case "CAPTURE_SCREENSHOT":
+          return handleCaptureScreenshot();
         default:
           return { error: "unknown_type" };
       }
@@ -169,4 +171,17 @@ async function handleUpdateKnowledge(id: string, payload: any) {
 
 async function handleDeleteKnowledge(id: string) {
   return apiFetch(`/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+async function handleCaptureScreenshot() {
+  try {
+    const dataUrl = await browser.tabs.captureVisibleTab();
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const buffer = await blob.arrayBuffer();
+    const bytes = Array.from(new Uint8Array(buffer));
+    return apiUpload("/knowledge/extract", bytes, "screenshot.png");
+  } catch (e: any) {
+    return { error: `Falha ao capturar tela: ${e.message}` };
+  }
 }

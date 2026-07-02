@@ -90,7 +90,7 @@ async def _extract_image(filename: str, content: bytes) -> dict:
         data_uri = f"data:{mime_type};base64,{b64}"
 
         from langchain_core.messages import HumanMessage
-        msg = rag_service.llm.invoke([
+        msg = await rag_service.llm.ainvoke([
             HumanMessage(content=[
                 {"type": "text", "text": "Descreva detalhadamente o conteúdo desta imagem. Extraia todo o texto visível e descreva imagens, tabelas ou gráficos presentes."},
                 {"type": "image_url", "image_url": {"url": data_uri}},

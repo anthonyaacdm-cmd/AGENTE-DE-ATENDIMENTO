@@ -77,7 +77,7 @@ async function generateSuggestion() {
       suggested_response: "",
       sources: [],
       confidence: 0,
-      error: "Nenhuma conversa encontrada. Use o formato: Nome: Mensagem",
+      error: "Nenhuma conversa encontrada. Digite a mensagem do aluno.",
     };
     loading.value = false;
     return;
@@ -106,8 +106,13 @@ async function generateSuggestion() {
 }
 
 function parseConversation(text: string): ConversationTurn[] {
-  return text
-    .split("\n")
+  const lines = text.split("\n").filter((l) => l.trim());
+  if (lines.length === 0) return [];
+  const hasColon = lines.some((l) => l.includes(":"));
+  if (!hasColon) {
+    return [{ author: "Aluno", message: lines.join("\n") }];
+  }
+  return lines
     .filter((line) => line.includes(":"))
     .map((line) => {
       const i = line.indexOf(":");
@@ -126,6 +131,29 @@ async function fetchPageText() {
     }
   } catch {
     // silent
+  }
+}
+
+async function captureScreenshot() {
+  try {
+    const result = await browser.runtime.sendMessage({ type: "CAPTURE_SCREENSHOT" });
+    if (result.error) {
+      suggestion.value = {
+        suggested_response: "",
+        sources: [],
+        confidence: 0,
+        error: `Erro ao capturar tela: ${result.error}`,
+      };
+    } else if (result.text) {
+      incomingAttachmentText.value = result.text;
+    }
+  } catch (err: any) {
+    suggestion.value = {
+      suggested_response: "",
+      sources: [],
+      confidence: 0,
+      error: `Erro ao capturar tela: ${err.message}`,
+    };
   }
 }
 
@@ -313,6 +341,7 @@ async function saveServerUrl() {
         <label>Conversa</label>
         <div class="textarea-actions">
           <button class="btn-sm" @click="fetchPageText">Capturar da página</button>
+          <button class="btn-sm" @click="captureScreenshot">Capturar tela</button>
           <label class="btn-sm btn-file">
             Anexar arquivo
             <input type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.gif,.bmp,.webp" @change="attachFileToGenerate" hidden />
