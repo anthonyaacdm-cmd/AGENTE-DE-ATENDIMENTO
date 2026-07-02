@@ -1,4 +1,4 @@
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from app.core.config import settings
@@ -33,19 +33,19 @@ class RAGService:
         self._init_llm()
 
     def _init_llm(self):
-        if not settings.openai_api_key:
-            print("[RAG] No OpenAI API key configured. Using fallback mode.")
+        if not settings.gemini_api_key:
+            print("[RAG] No Gemini API key configured. Using fallback mode.")
             self._ready = False
             return
 
         try:
-            self.embeddings = OpenAIEmbeddings(
+            self.embeddings = GoogleGenerativeAIEmbeddings(
                 model=settings.embedding_model,
-                api_key=settings.openai_api_key,
+                google_api_key=settings.gemini_api_key,
             )
-            self.llm = ChatOpenAI(
+            self.llm = ChatGoogleGenerativeAI(
                 model=settings.llm_model,
-                api_key=settings.openai_api_key,
+                google_api_key=settings.gemini_api_key,
                 temperature=0.3,
                 max_tokens=1024,
             )
@@ -87,7 +87,7 @@ class RAGService:
                 suggested_response="",
                 sources=[],
                 confidence=0.0,
-                error="API OpenAI não configurada. Defina OPENAI_API_KEY no .env",
+                error="API Gemini não configurada. Defina GEMINI_API_KEY no .env",
             )
 
         conversation_text = self._format_conversation(conversation)

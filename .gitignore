@@ -6,3 +6,5 @@ dist/
 *.zip
 backend/data/
 .wxt/
+.output/
+*.log

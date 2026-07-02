@@ -3,18 +3,33 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 from app.core.config import settings
 from app.models.schemas import KnowledgeEntry, KnowledgeSearchResult
 import uuid
+import os
 
 
 class QdrantService:
     def __init__(self):
-        self.client = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key or None,
-            timeout=5,
-        )
         self.collection_name = settings.collection_name
         self.vector_size = 1536
         self._ready = False
+        self._local = False
+        self.client = self._create_client()
+
+    def _create_client(self):
+        try:
+            client = QdrantClient(
+                url=settings.qdrant_url,
+                api_key=settings.qdrant_api_key or None,
+                timeout=5,
+            )
+            client.get_collections()
+            print(f"[Qdrant] Connected to server at {settings.qdrant_url}")
+            return client
+        except Exception:
+            local_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "qdrant")
+            os.makedirs(local_path, exist_ok=True)
+            print(f"[Qdrant] Server unavailable. Using local mode at {local_path}")
+            self._local = True
+            return QdrantClient(path=local_path)
 
     def ensure_collection(self):
         if self._ready:

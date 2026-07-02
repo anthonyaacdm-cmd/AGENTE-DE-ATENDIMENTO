@@ -24,8 +24,8 @@ app.include_router(router, prefix="/api/v1")
 @app.on_event("startup")
 async def startup():
     qdrant_service.ensure_collection()
-    has_key = bool(settings.openai_api_key)
-    print(f"[Server] OpenAI key: {'configurada' if has_key else 'NÃO configurada'}")
+    has_key = bool(settings.gemini_api_key)
+    print(f"[Server] Gemini key: {'configurada' if has_key else 'NÃO configurada'}")
     print(f"[Server] Qdrant URL: {settings.qdrant_url}")
     print(f"[Server] Docs: http://localhost:8000/docs")
 
