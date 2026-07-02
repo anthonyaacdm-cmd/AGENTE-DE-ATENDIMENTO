@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: Optional[str] = None
     embedding_model: str = "models/gemini-embedding-001"
-    llm_model: str = "models/gemini-2.0-flash"
+    llm_model: str = "models/gemini-2.5-flash"
     collection_name: str = "knowledge_base"
 
     class Config:
