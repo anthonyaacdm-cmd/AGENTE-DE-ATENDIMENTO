@@ -145,7 +145,7 @@ async function captureScreenshot() {
         error: `Erro ao capturar tela: ${result.error}`,
       };
     } else if (result.text) {
-      incomingAttachmentText.value = result.text;
+      conversationText.value = result.text;
     }
   } catch (err: any) {
     suggestion.value = {

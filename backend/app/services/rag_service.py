@@ -50,7 +50,7 @@ class RAGService:
                 model=settings.llm_model,
                 google_api_key=settings.gemini_api_key,
                 temperature=0.3,
-                max_tokens=2048,
+                max_tokens=4096,
             )
 
             prompt = ChatPromptTemplate.from_messages([
