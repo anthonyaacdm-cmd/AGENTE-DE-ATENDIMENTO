@@ -10,6 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from app.core.config import settings
 from app.services.qdrant_service import qdrant_service
+from app.utils import strip_pii as _strip_pii
 from app.models.schemas import (
     ConversationTurn, GenerateResponse,
     ConversationSession, AnalyzePageResponse,
@@ -63,14 +64,6 @@ Responda APENAS em JSON no formato:
   "suggested_knowledge_category": "categoria sugerida"
 }}"""
 
-PII_PATTERNS = [
-    r'\b\d{3}\.\d{3}\.\d{3}-\d{2}\b',
-    r'\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b',
-    r'\b\d{11}\b',
-    r'\b\d{4}-\d{4}-\d{4}-\d{4}\b',
-    r'\b\d{16}\b',
-]
-
 INTENT_CATEGORIES = [
     "duvida_matricula", "problema_financeiro", "suporte_tecnico",
     "informacao_academica", "reclamacao", "solicitacao_documento",
@@ -107,12 +100,6 @@ class ConversationStore:
 
 
 conversation_store = ConversationStore()
-
-
-def _strip_pii(text: str) -> str:
-    for pattern in PII_PATTERNS:
-        text = re.sub(pattern, "[REDACTED]", text)
-    return text
 
 
 class RAGService:
