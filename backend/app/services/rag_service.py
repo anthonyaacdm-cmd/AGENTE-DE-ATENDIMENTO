@@ -1,9 +1,15 @@
+import asyncio
+import re
+import logging
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from app.core.config import settings
 from app.services.qdrant_service import qdrant_service
 from app.models.schemas import ConversationTurn, GenerateResponse
+
+logger = logging.getLogger(__name__)
+RETRY_LIMIT = 3
 
 SYSTEM_PROMPT = """Você é um assistente especializado em atendimento ao aluno.
 
@@ -82,6 +88,25 @@ class RAGService:
             parts.append(f"[{r.category}] {r.title} (relevância: {r.score:.2f})\n{r.content}")
         return "\n\n---\n\n".join(parts)
 
+    async def _call_with_retry(self, inputs: dict) -> str:
+        for attempt in range(RETRY_LIMIT):
+            try:
+                return await self.chain.ainvoke(inputs)
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    match = re.search(r'retryDelay[^}]*"(\d+)s"', err_str)
+                    wait = int(match.group(1)) + 2 if match else 5 * (attempt + 1)
+                    wait = min(wait, 60)
+                    logger.warning(f"Quota excedida na geração (tentativa {attempt+1}/{RETRY_LIMIT}). Aguardando {wait}s...")
+                    if attempt < RETRY_LIMIT - 1:
+                        await asyncio.sleep(wait)
+                    else:
+                        raise
+                else:
+                    raise
+        return ""
+
     async def generate_response(
         self, conversation: list[ConversationTurn], ticket_title: str = "",
         attachment_text: str = "",
@@ -103,7 +128,7 @@ class RAGService:
         knowledge_context = self._format_knowledge(knowledge_results)
         attachment_context = attachment_text if attachment_text else "Nenhum anexo."
 
-        response = await self.chain.ainvoke({
+        response = await self._call_with_retry({
             "knowledge_context": knowledge_context,
             "conversation_history": conversation_text,
             "attachment_context": attachment_context,
@@ -113,6 +138,14 @@ class RAGService:
                 f"gere uma resposta sugerida para o atendente."
             ),
         })
+
+        if not response:
+            return GenerateResponse(
+                suggested_response="",
+                sources=[],
+                confidence=0.0,
+                error="Limite da API Gemini excedido. A cota gratuita permite ~20 requisições/dia para gemini-2.5-flash. Aguarde ou use outro modelo.",
+            )
 
         avg_score = (
             sum(r.score for r in knowledge_results) / len(knowledge_results)

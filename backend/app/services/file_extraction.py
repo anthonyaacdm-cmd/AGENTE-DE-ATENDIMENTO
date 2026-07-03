@@ -1,5 +1,6 @@
 import io
 import os
+import asyncio
 import logging
 from io import BytesIO
 from app.services.rag_service import rag_service
@@ -22,6 +23,7 @@ ALLOWED_EXTENSIONS = {
 
 MAX_IMAGE_DIMENSION = 2048
 VISION_MAX_TOKENS = 4096
+VISION_RETRIES = 3
 
 _vision_llm: ChatGoogleGenerativeAI | None = None
 
@@ -123,6 +125,28 @@ def _resize_image(content: bytes, max_dim: int = MAX_IMAGE_DIMENSION) -> bytes:
         return content
 
 
+async def _call_vision_with_retry(vision_llm: ChatGoogleGenerativeAI, messages: list) -> str:
+    for attempt in range(VISION_RETRIES):
+        try:
+            msg = await vision_llm.ainvoke(messages)
+            return msg.content.strip()
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                import re
+                match = re.search(r'retryDelay[^}]*"(\d+)s"', err_str)
+                wait = int(match.group(1)) + 2 if match else 5 * (attempt + 1)
+                wait = min(wait, 60)
+                logger.warning(f"Quota excedida (tentativa {attempt+1}/{VISION_RETRIES}). Aguardando {wait}s...")
+                if attempt < VISION_RETRIES - 1:
+                    await asyncio.sleep(wait)
+                else:
+                    return ""
+            else:
+                raise
+    return ""
+
+
 async def _extract_image(filename: str, content: bytes) -> dict:
     if not rag_service.is_ready() or not rag_service.llm:
         return {"text": "", "format": "image", "error": "IA não configurada para análise de imagem"}
@@ -138,7 +162,7 @@ async def _extract_image(filename: str, content: bytes) -> dict:
         from langchain_core.messages import HumanMessage
 
         vision_llm = _get_vision_llm()
-        msg = await vision_llm.ainvoke([
+        extracted = await _call_vision_with_retry(vision_llm, [
             HumanMessage(content=[
                 {
                     "type": "text",
@@ -153,9 +177,8 @@ async def _extract_image(filename: str, content: bytes) -> dict:
                 {"type": "image_url", "image_url": {"url": data_uri}},
             ])
         ])
-        extracted = msg.content.strip()
         if not extracted:
-            return {"text": "", "format": "image", "error": "Nenhum texto identificado na imagem"}
+            return {"text": "", "format": "image", "error": "Limite da API Gemini excedido. A cota gratuita permite ~20 requisições/dia para gemini-2.5-flash. Tente novamente mais tarde ou use outro modelo."}
         return {"text": extracted, "format": "image", "filename": filename}
     except Exception as e:
         logger.error(f"Erro ao analisar imagem {filename}: {e}", exc_info=True)
