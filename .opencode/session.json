@@ -1,0 +1,45 @@
+{
+  "session": "2026-07-03",
+  "last_commit": "e2f2848",
+  "project": "AGENTE DE ATENDIMENTO",
+  "status": {
+    "backend": "Deployado no Render - Online",
+    "backend_url": "https://agente-de-atendimento.onrender.com",
+    "extension": "Build local em extension/.output/chrome-mv3/",
+    "extension_zip": "extension/.output/agente-atendimento-1.0.0-chrome.zip"
+  },
+  "done": [
+    "Sidepanel (chrome.sidePanel) com análise automática da aba ativa",
+    "Ícone flutuante 'G' no canto inferior direito de todas as páginas",
+    "Menu de contexto: selecionar texto → 'Analisar com Agente de Atendimento'",
+    "Extração estruturada de páginas (forms, tabelas, botões, alertas, cards, breadcrumbs, etc.)",
+    "Classificação de tipo de página (ticket, chat, FAQ, formulário, dashboard, erro...)",
+    "Extração de entidades (nomes, protocolos, departamentos, valores, prazos)",
+    "Detecção de intenção e sentimento da página",
+    "Cross-reference com base de conhecimento (RAG) durante a análise",
+    "Ações sugeridas para o atendente",
+    "Prompt de análise profundo no RAG service",
+    "Deploy no Render do backend com todas as alterações"
+  ],
+  "pending": [
+    "Treinar base de conhecimento com dados reais da central de atendimento",
+    "Personalizar categorias de intenção se necessário",
+    "Publicar extensão na Chrome Web Store (se desejado)"
+  ],
+  "architecture": {
+    "extension": {
+      "entrypoints": {
+        "sidepanel": "Analisa página e gera respostas",
+        "popup": "Acesso rápido com link para sidepanel",
+        "background": "API client, context menus, sidepanel gerenciamento",
+        "content": "Ícone flutuante 'G' em todas as páginas"
+      },
+      "build": "wxt build → .output/chrome-mv3/"
+    },
+    "backend": {
+      "api": "/api/v1/generate, /api/v1/analyze-page, /api/v1/knowledge/*, /api/v1/health",
+      "rag": "Gemini LLM + embeddings, Qdrant vector DB, reranker, chunker",
+      "analysis": "ANALYZE_PROMPT com page_type, entities, intent, sentiment, knowledge_matches, suggested_actions"
+    }
+  }
+}
