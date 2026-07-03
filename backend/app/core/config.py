@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     embedding_model: str = "models/gemini-embedding-001"
     llm_model: str = "gemini-2.5-flash"
     collection_name: str = "knowledge_base"
+    api_key: str = ""
+    max_conversation_turns: int = 50
 
     class Config:
         env_file = ".env"

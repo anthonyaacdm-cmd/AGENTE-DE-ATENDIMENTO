@@ -12,12 +12,16 @@ interface Suggestion {
   sources: string[];
   confidence: number;
   error?: string;
+  conversation_id?: string;
+  intent?: string;
+  sentiment?: string;
 }
 
 interface HealthStatus {
   status: string;
   qdrant: boolean;
   ai: boolean;
+  auth: boolean;
 }
 
 interface KnowledgeItem {
@@ -29,13 +33,24 @@ interface KnowledgeItem {
   source_url?: string;
 }
 
-const activeTab = ref<"gerar" | "conhecimento" | "consultar" | "config">("gerar");
+interface PageAnalysis {
+  summary: string;
+  topics: string[];
+  key_points: string[];
+  suggested_knowledge_title?: string;
+  suggested_knowledge_category?: string;
+}
+
+const activeTab = ref<"gerar" | "conhecimento" | "consultar" | "analisar" | "config">("gerar");
 const loading = ref(false);
 const suggestion = ref<Suggestion | null>(null);
 const health = ref<HealthStatus | null>(null);
 const serverUrl = ref("https://agente-de-atendimento.onrender.com");
+const apiKey = ref("");
 const conversationText = ref("");
 const ticketTitle = ref("");
+const useStream = ref(false);
+const streamContent = ref("");
 
 const incomingAttachmentText = ref("");
 
@@ -52,9 +67,38 @@ const consultLoading = ref(false);
 const consultEditing = ref<KnowledgeItem | null>(null);
 const consultError = ref("");
 
+const analysis = ref<PageAnalysis | null>(null);
+const analysisLoading = ref(false);
+const analysisError = ref("");
+
+const feedbackRating = ref(0);
+const feedbackComment = ref("");
+const feedbackSent = ref(false);
+
+const lastConversationId = ref("");
+
+const intentLabels: Record<string, string> = {
+  duvida_matricula: "Dúvida Matrícula",
+  problema_financeiro: "Problema Financeiro",
+  suporte_tecnico: "Suporte Técnico",
+  informacao_academica: "Informação Acadêmica",
+  reclamacao: "Reclamação",
+  solicitacao_documento: "Solicitação Documento",
+  cancelamento: "Cancelamento",
+  outro: "Outro",
+};
+
+const sentimentLabels: Record<string, string> = {
+  positivo: "😊 Positivo",
+  neutro: "😐 Neutro",
+  negativo: "😟 Negativo",
+  irritado: "😠 Irritado",
+};
+
 onMounted(async () => {
-  const saved = await browser.storage.local.get("serverUrl");
+  const saved = await browser.storage.local.get(["serverUrl", "apiKey"]);
   if (saved.serverUrl) serverUrl.value = saved.serverUrl;
+  if (saved.apiKey) apiKey.value = saved.apiKey;
   checkHealth();
 });
 
@@ -63,45 +107,7 @@ async function checkHealth() {
     const res = await browser.runtime.sendMessage({ type: "GET_HEALTH" });
     health.value = res as HealthStatus;
   } catch {
-    health.value = { status: "error", qdrant: false, ai: false };
-  }
-}
-
-async function generateSuggestion() {
-  loading.value = true;
-  suggestion.value = null;
-
-  const turns = parseConversation(conversationText.value);
-  if (turns.length === 0) {
-    suggestion.value = {
-      suggested_response: "",
-      sources: [],
-      confidence: 0,
-      error: "Nenhuma conversa encontrada. Digite a mensagem do aluno.",
-    };
-    loading.value = false;
-    return;
-  }
-
-  try {
-    const result = await browser.runtime.sendMessage({
-      type: "GENERATE_RESPONSE",
-      payload: {
-        conversation: turns,
-        ticketTitle: ticketTitle.value,
-        attachmentText: incomingAttachmentText.value,
-      },
-    });
-    suggestion.value = result as Suggestion;
-  } catch (err: any) {
-    suggestion.value = {
-      suggested_response: "",
-      sources: [],
-      confidence: 0,
-      error: `Erro: ${err.message}`,
-    };
-  } finally {
-    loading.value = false;
+    health.value = { status: "error", qdrant: false, ai: false, auth: false };
   }
 }
 
@@ -123,14 +129,140 @@ function parseConversation(text: string): ConversationTurn[] {
     });
 }
 
+async function generateSuggestion() {
+  loading.value = true;
+  suggestion.value = null;
+  streamContent.value = "";
+  feedbackSent.value = false;
+
+  const turns = parseConversation(conversationText.value);
+  if (turns.length === 0) {
+    suggestion.value = {
+      suggested_response: "",
+      sources: [],
+      confidence: 0,
+      error: "Nenhuma conversa encontrada. Digite a mensagem do aluno.",
+    };
+    loading.value = false;
+    return;
+  }
+
+  if (useStream.value) {
+    await generateStreaming(turns);
+    return;
+  }
+
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: "GENERATE_RESPONSE",
+      payload: {
+        conversation: turns,
+        ticketTitle: ticketTitle.value,
+        attachmentText: incomingAttachmentText.value,
+        conversationId: lastConversationId.value || undefined,
+      },
+    });
+    if (result.conversation_id) {
+      lastConversationId.value = result.conversation_id;
+    }
+    suggestion.value = result as Suggestion;
+  } catch (err: any) {
+    suggestion.value = {
+      suggested_response: "",
+      sources: [],
+      confidence: 0,
+      error: `Erro: ${err.message}`,
+    };
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function generateStreaming(turns: ConversationTurn[]) {
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: "GENERATE_STREAM",
+      payload: {
+        conversation: turns,
+        ticketTitle: ticketTitle.value,
+        conversationId: lastConversationId.value || undefined,
+      },
+    });
+
+    if (result.error) {
+      suggestion.value = { suggested_response: "", sources: [], confidence: 0, error: result.error };
+      loading.value = false;
+      return;
+    }
+
+    const reader = result.stream;
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.token) {
+              streamContent.value += data.token;
+            }
+            if (data.done) {
+              if (data.conversation_id) {
+                lastConversationId.value = data.conversation_id;
+              }
+              suggestion.value = {
+                suggested_response: streamContent.value,
+                sources: [],
+                confidence: 0.5,
+              };
+            }
+            if (data.error) {
+              suggestion.value = { suggested_response: "", sources: [], confidence: 0, error: data.error };
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch (err: any) {
+    suggestion.value = { suggested_response: "", sources: [], confidence: 0, error: `Erro: ${err.message}` };
+  } finally {
+    loading.value = false;
+  }
+}
+
 async function fetchPageText() {
   try {
     const result = await browser.runtime.sendMessage({ type: "FETCH_PAGE_TEXT" });
     if (result.text) {
-      conversationText.value = result.text.slice(0, 5000);
+      conversationText.value = result.text.slice(0, 15000);
     }
   } catch {
     // silent
+  }
+}
+
+async function analyzeCurrentPage() {
+  analysisLoading.value = true;
+  analysis.value = null;
+  analysisError.value = "";
+
+  try {
+    const result = await browser.runtime.sendMessage({ type: "ANALYZE_PAGE" });
+    if (result.error) {
+      analysisError.value = result.error;
+    } else {
+      analysis.value = result as PageAnalysis;
+    }
+  } catch (err: any) {
+    analysisError.value = `Erro: ${err.message}`;
+  } finally {
+    analysisLoading.value = false;
   }
 }
 
@@ -157,8 +289,43 @@ async function captureScreenshot() {
   }
 }
 
+async function submitFeedback() {
+  if (!suggestion.value?.conversation_id || feedbackRating.value === 0) return;
+  try {
+    await browser.runtime.sendMessage({
+      type: "SUBMIT_FEEDBACK",
+      payload: {
+        conversation_id: suggestion.value.conversation_id,
+        response_text: suggestion.value.suggested_response,
+        rating: feedbackRating.value,
+        comment: feedbackComment.value,
+      },
+    });
+    feedbackSent.value = true;
+  } catch {
+    // silent
+  }
+}
+
+function addAnalysisAsKnowledge() {
+  if (!analysis.value?.suggested_knowledge_title) return;
+  activeTab.value = "conhecimento";
+  kTitle.value = analysis.value.suggested_knowledge_title || "";
+  kContent.value = analysis.value.summary + "\n\n" + analysis.value.key_points.join("\n");
+  kCategory.value = analysis.value.suggested_knowledge_category || "geral";
+}
+
 function copyText(text: string) {
   navigator.clipboard.writeText(text);
+}
+
+function newConversation() {
+  lastConversationId.value = "";
+  conversationText.value = "";
+  suggestion.value = null;
+  streamContent.value = "";
+  incomingAttachmentText.value = "";
+  feedbackSent.value = false;
 }
 
 async function attachFileToGenerate(event: Event) {
@@ -312,8 +479,9 @@ async function deleteKnowledge(id: string) {
 }
 
 async function saveServerUrl() {
-  await browser.storage.local.set({ serverUrl: serverUrl.value });
+  await browser.storage.local.set({ serverUrl: serverUrl.value, apiKey: apiKey.value });
   await browser.runtime.sendMessage({ type: "SET_SERVER_URL", url: serverUrl.value });
+  await browser.runtime.sendMessage({ type: "SET_API_KEY", apiKey: apiKey.value });
   checkHealth();
 }
 </script>
@@ -324,6 +492,7 @@ async function saveServerUrl() {
       <h1>Agente de Atendimento</h1>
       <div class="tabs">
         <button :class="{ active: activeTab === 'gerar' }" @click="activeTab = 'gerar'">Gerar</button>
+        <button :class="{ active: activeTab === 'analisar' }" @click="activeTab = 'analisar'">Analisar</button>
         <button :class="{ active: activeTab === 'conhecimento' }" @click="activeTab = 'conhecimento'">Conhecimento</button>
         <button :class="{ active: activeTab === 'consultar' }" @click="activeTab = 'consultar'; loadConsultList()">Consultar</button>
         <button :class="{ active: activeTab === 'config' }" @click="activeTab = 'config'">Config</button>
@@ -346,6 +515,13 @@ async function saveServerUrl() {
             Anexar arquivo
             <input type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.gif,.bmp,.webp" @change="attachFileToGenerate" hidden />
           </label>
+          <button v-if="lastConversationId" class="btn-sm" @click="newConversation">Nova conversa</button>
+        </div>
+        <div class="stream-toggle">
+          <label>
+            <input type="checkbox" v-model="useStream" />
+            Streaming (tempo real)
+          </label>
         </div>
         <textarea
           v-model="conversationText"
@@ -361,6 +537,10 @@ Atendente: Claro, como posso ajudar?'
         <strong>Anexo processado:</strong> {{ incomingAttachmentText.slice(0, 100) }}...
       </div>
 
+      <div v-if="lastConversationId" class="session-badge">
+        Sessão ativa: <strong>{{ lastConversationId }}</strong>
+      </div>
+
       <button
         class="btn-primary"
         :disabled="loading || !conversationText"
@@ -368,6 +548,10 @@ Atendente: Claro, como posso ajudar?'
       >
         {{ loading ? "Gerando..." : "Gerar Resposta Sugerida" }}
       </button>
+
+      <div v-if="loading && streamContent" class="stream-box">
+        <p>{{ streamContent }}</p>
+      </div>
 
       <div v-if="suggestion" class="result-box">
         <div v-if="suggestion.error" class="error">{{ suggestion.error }}</div>
@@ -379,10 +563,16 @@ Atendente: Claro, como posso ajudar?'
                 {{ (suggestion.confidence * 100).toFixed(0) }}%
               </span>
             </div>
+            <div v-if="suggestion.intent" class="meta-tags">
+              <span class="tag-intent">{{ intentLabels[suggestion.intent] || suggestion.intent }}</span>
+              <span v-if="suggestion.sentiment" class="tag-sentiment">{{ sentimentLabels[suggestion.sentiment] || suggestion.sentiment }}</span>
+            </div>
             <p>{{ suggestion.suggested_response }}</p>
-            <button class="btn-copy" @click="copyText(suggestion.suggested_response)">
-              Copiar resposta
-            </button>
+            <div class="response-actions">
+              <button class="btn-copy" @click="copyText(suggestion.suggested_response)">
+                Copiar resposta
+              </button>
+            </div>
           </div>
 
           <div v-if="suggestion.sources.length" class="sources">
@@ -391,6 +581,53 @@ Atendente: Claro, como posso ajudar?'
               <li v-for="s in suggestion.sources" :key="s">{{ s }}</li>
             </ul>
           </div>
+
+          <!-- Feedback -->
+          <div v-if="suggestion.conversation_id && !feedbackSent" class="feedback-box">
+            <strong>Esta resposta foi útil?</strong>
+            <div class="stars">
+              <button v-for="n in 5" :key="n" class="star" :class="{ active: n <= feedbackRating }" @click="feedbackRating = n">{{ n <= feedbackRating ? '★' : '☆' }}</button>
+            </div>
+            <input v-model="feedbackComment" placeholder="Comentário (opcional)" class="feedback-input" />
+            <button class="btn-sm" :disabled="feedbackRating === 0" @click="submitFeedback">Enviar feedback</button>
+          </div>
+          <div v-if="feedbackSent" class="feedback-ok">Feedback registrado! Obrigado.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Analisar -->
+    <div v-if="activeTab === 'analisar'" class="tab-content">
+      <h2>Analisar Página Atual</h2>
+      <p class="help-text">Analisa o conteúdo completo da aba ativa usando IA, igual ao Gemini no Chrome.</p>
+      <button class="btn-primary" :disabled="analysisLoading" @click="analyzeCurrentPage">
+        {{ analysisLoading ? "Analisando..." : "Analisar página atual" }}
+      </button>
+
+      <div v-if="analysisLoading" class="loading">Lendo página e processando...</div>
+      <div v-if="analysisError" class="error">{{ analysisError }}</div>
+
+      <div v-if="analysis" class="analysis-box">
+        <h3>Resumo</h3>
+        <p>{{ analysis.summary }}</p>
+
+        <div v-if="analysis.topics.length">
+          <h3>Tópicos</h3>
+          <div class="topic-list">
+            <span v-for="t in analysis.topics" :key="t" class="topic-tag">{{ t }}</span>
+          </div>
+        </div>
+
+        <div v-if="analysis.key_points.length">
+          <h3>Pontos-chave</h3>
+          <ul>
+            <li v-for="p in analysis.key_points" :key="p">{{ p }}</li>
+          </ul>
+        </div>
+
+        <div v-if="analysis.suggested_knowledge_title" class="suggest-add">
+          <p>Sugestão: adicionar "{{ analysis.suggested_knowledge_title }}" à base de conhecimento</p>
+          <button class="btn-sm" @click="addAnalysisAsKnowledge">Adicionar como conhecimento</button>
         </div>
       </div>
     </div>
@@ -444,7 +681,6 @@ Atendente: Claro, como posso ajudar?'
       <div v-if="consultLoading" class="loading">Carregando...</div>
       <div v-if="consultError" class="error">{{ consultError }}</div>
 
-      <!-- Edit form -->
       <div v-if="consultEditing" class="edit-card">
         <h3>Editar: {{ consultEditing.title }}</h3>
         <div class="field">
@@ -478,7 +714,6 @@ Atendente: Claro, como posso ajudar?'
         </div>
       </div>
 
-      <!-- Knowledge list -->
       <div v-if="!consultLoading && !consultEditing" class="knowledge-list">
         <div v-if="consultList.length === 0" class="empty">Nenhum conhecimento encontrado.</div>
         <div v-for="item in consultList" :key="item.id" class="knowledge-card">
@@ -505,6 +740,10 @@ Atendente: Claro, como posso ajudar?'
         <label>URL do servidor</label>
         <input v-model="serverUrl" placeholder="https://agente-de-atendimento.onrender.com" />
       </div>
+      <div class="field">
+        <label>API Key (se o servidor exigir)</label>
+        <input v-model="apiKey" type="password" placeholder="Chave de acesso" />
+      </div>
       <button class="btn-primary" @click="saveServerUrl">Salvar</button>
 
       <div class="status-card">
@@ -513,6 +752,7 @@ Atendente: Claro, como posso ajudar?'
           <p>Servidor: <span :class="health.status === 'ok' ? 'ok' : 'err'">{{ health.status }}</span></p>
           <p>Qdrant: <span :class="health.qdrant ? 'ok' : 'err'">{{ health.qdrant ? 'Online' : 'Offline' }}</span></p>
           <p>IA: <span :class="health.ai ? 'ok' : 'err'">{{ health.ai ? 'Configurada' : 'Sem chave API' }}</span></p>
+          <p>Auth: <span :class="health.auth ? 'ok' : 'err'">{{ health.auth ? 'Requer chave' : 'Livre' }}</span></p>
         </div>
         <p v-else class="err">Não foi possível conectar</p>
         <button class="btn-sm" @click="checkHealth">Verificar novamente</button>
@@ -531,8 +771,8 @@ function confidenceLevel(score: number): string {
 
 <style scoped>
 .app {
-  width: 420px;
-  min-height: 300px;
+  width: 480px;
+  min-height: 400px;
   padding: 0;
 }
 
@@ -561,7 +801,7 @@ function confidenceLevel(score: number): string {
   background: rgba(255, 255, 255, 0.15);
   color: rgba(255, 255, 255, 0.7);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   transition: all 0.2s;
 }
@@ -628,10 +868,24 @@ function confidenceLevel(score: number): string {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 6px;
+  gap: 4px;
 }
 
 .textarea-actions label {
   margin-bottom: 0;
+}
+
+.stream-toggle {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.stream-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 
 .btn-sm {
@@ -643,10 +897,16 @@ function confidenceLevel(score: number): string {
   cursor: pointer;
   color: #475569;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .btn-sm:hover {
   background: #cbd5e1;
+}
+
+.btn-sm:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .btn-file {
@@ -718,6 +978,12 @@ function confidenceLevel(score: number): string {
   line-height: 1.6;
   white-space: pre-wrap;
   color: #0f172a;
+}
+
+.response-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .badge {
@@ -799,6 +1065,16 @@ h3 {
   border-radius: 6px;
   font-size: 12px;
   color: #854d0e;
+  margin-bottom: 8px;
+}
+
+.session-badge {
+  padding: 6px 10px;
+  background: #e0e7ff;
+  border: 1px solid #a5b4fc;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #4338ca;
   margin-bottom: 8px;
 }
 
@@ -913,5 +1189,156 @@ h3 {
   display: flex;
   gap: 6px;
   margin-top: 8px;
+}
+
+/* Analyze tab */
+.help-text {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 12px;
+}
+
+.analysis-box {
+  margin-top: 16px;
+}
+
+.analysis-box h3 {
+  font-size: 13px;
+  color: #1e293b;
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+.analysis-box p {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #475569;
+}
+
+.topic-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topic-tag {
+  font-size: 11px;
+  background: #e0e7ff;
+  color: #4338ca;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.analysis-box ul {
+  margin: 4px 0 0 16px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.analysis-box ul li {
+  margin-bottom: 4px;
+}
+
+.suggest-add {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.suggest-add button {
+  margin-top: 8px;
+}
+
+/* Feedback */
+.feedback-box {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.feedback-box strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.stars {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.star {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: #cbd5e1;
+  padding: 0;
+}
+
+.star.active {
+  color: #f59e0b;
+}
+
+.feedback-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
+
+.feedback-ok {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.meta-tags {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.tag-intent {
+  font-size: 10px;
+  background: #e0e7ff;
+  color: #4338ca;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.tag-sentiment {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.stream-box {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: #0f172a;
+  max-height: 200px;
+  overflow-y: auto;
 }
 </style>

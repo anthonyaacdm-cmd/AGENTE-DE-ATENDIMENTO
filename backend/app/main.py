@@ -9,7 +9,7 @@ from app.core.config import settings
 app = FastAPI(
     title="Agente de Atendimento API",
     description="Gerador de respostas inteligente com RAG",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -27,7 +27,9 @@ app.include_router(router, prefix="/api/v1")
 async def startup():
     qdrant_service.ensure_collection()
     has_key = bool(settings.gemini_api_key)
+    has_auth = bool(settings.api_key)
     print(f"[Server] Gemini key: {'configurada' if has_key else 'NÃO configurada'}")
+    print(f"[Server] API key auth: {'ativada' if has_auth else 'desativada (inseguro)'}")
     print(f"[Server] Qdrant URL: {settings.qdrant_url}")
     print(f"[Server] Docs: http://localhost:8000/docs")
 
@@ -48,7 +50,7 @@ async def _seed_knowledge(path: str):
             entries = json.load(f)
         for entry in entries:
             embedding = await rag_service.embeddings.aembed_query(entry["content"])
-            qdrant_service.upsert_knowledge(KnowledgeEntry(**entry), embedding)
+            await qdrant_service.upsert_knowledge(KnowledgeEntry(**entry), embedding)
         print(f"[Seed] {len(entries)} conhecimentos adicionados com sucesso.")
     except Exception as e:
         print(f"[Seed] Erro ao popular base: {e}")
@@ -58,7 +60,7 @@ async def _seed_knowledge(path: str):
 async def root():
     return {
         "app": "Agente de Atendimento",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "docs": "/docs",
         "health": "/api/v1/health",
     }

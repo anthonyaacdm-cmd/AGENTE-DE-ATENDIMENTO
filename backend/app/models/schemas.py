@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional, List
+from datetime import datetime
 
 
 class ConversationTurn(BaseModel):
@@ -13,6 +14,7 @@ class GenerateRequest(BaseModel):
     ticket_title: Optional[str] = ""
     platform: Optional[str] = ""
     attachment_text: Optional[str] = ""
+    conversation_id: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -20,6 +22,21 @@ class GenerateResponse(BaseModel):
     sources: List[str] = []
     confidence: float = 0.0
     error: Optional[str] = None
+    conversation_id: Optional[str] = None
+    intent: Optional[str] = None
+    sentiment: Optional[str] = None
+
+
+class GenerateStreamEvent(BaseModel):
+    event: str
+    data: str
+
+
+class FeedbackRequest(BaseModel):
+    conversation_id: str
+    response_text: str
+    rating: int
+    comment: Optional[str] = ""
 
 
 class KnowledgeEntry(BaseModel):
@@ -76,3 +93,37 @@ class ExtractTextResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class AnalyzePageRequest(BaseModel):
+    url: str
+    title: str
+    text: str
+    html: Optional[str] = ""
+
+
+class AnalyzePageResponse(BaseModel):
+    summary: str
+    topics: List[str] = []
+    key_points: List[str] = []
+    suggested_knowledge_title: Optional[str] = None
+    suggested_knowledge_category: Optional[str] = None
+
+
+class ConversationSession(BaseModel):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    turns: List[ConversationTurn]
+    ticket_title: str = ""
+    platform: str = ""
+    context: str = ""
+
+
+class FeedbackEntry(BaseModel):
+    id: str
+    conversation_id: str
+    response_text: str
+    rating: int
+    comment: str
+    created_at: datetime

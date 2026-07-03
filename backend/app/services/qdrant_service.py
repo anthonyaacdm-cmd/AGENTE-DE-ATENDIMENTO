@@ -4,6 +4,11 @@ from app.core.config import settings
 from app.models.schemas import KnowledgeEntry, KnowledgeSearchResult, KnowledgeDetail
 import uuid
 import os
+import asyncio
+
+
+async def _run_sync(fn, *args, **kwargs):
+    return await asyncio.to_thread(lambda: fn(*args, **kwargs))
 
 
 class QdrantService:
@@ -53,10 +58,11 @@ class QdrantService:
     def is_ready(self) -> bool:
         return self._ready
 
-    def upsert_knowledge(self, entry: KnowledgeEntry, embedding: list[float]) -> str:
+    async def upsert_knowledge(self, entry: KnowledgeEntry, embedding: list[float]) -> str:
         self.ensure_collection()
         point_id = entry.id or str(uuid.uuid4())
-        self.client.upsert(
+        await _run_sync(
+            self.client.upsert,
             collection_name=self.collection_name,
             points=[
                 models.PointStruct(
@@ -74,12 +80,13 @@ class QdrantService:
         )
         return point_id
 
-    def search(self, query_embedding: list[float], limit: int = 5) -> list[KnowledgeSearchResult]:
+    async def search(self, query_embedding: list[float], limit: int = 5) -> list[KnowledgeSearchResult]:
         self.ensure_collection()
         if not self._ready:
             return []
         try:
-            results = self.client.query_points(
+            results = await _run_sync(
+                self.client.query_points,
                 collection_name=self.collection_name,
                 query=query_embedding,
                 limit=limit,
@@ -99,12 +106,13 @@ class QdrantService:
             print(f"[Qdrant] Search error: {e}")
             return []
 
-    def list_all(self, limit: int = 50, offset: int = 0) -> list[KnowledgeDetail]:
+    async def list_all(self, limit: int = 50, offset: int = 0) -> list[KnowledgeDetail]:
         self.ensure_collection()
         if not self._ready:
             return []
         try:
-            results = self.client.scroll(
+            results = await _run_sync(
+                self.client.scroll,
                 collection_name=self.collection_name,
                 limit=limit,
                 offset=offset,
@@ -126,10 +134,11 @@ class QdrantService:
             print(f"[Qdrant] List error: {e}")
             return []
 
-    def get_point(self, point_id: str) -> KnowledgeDetail | None:
+    async def get_point(self, point_id: str) -> KnowledgeDetail | None:
         self.ensure_collection()
         try:
-            results = self.client.retrieve(
+            results = await _run_sync(
+                self.client.retrieve,
                 collection_name=self.collection_name,
                 ids=[point_id],
                 with_payload=True,
@@ -150,7 +159,7 @@ class QdrantService:
             print(f"[Qdrant] Get point error: {e}")
             return None
 
-    def update_point(self, point_id: str, entry: KnowledgeEntry, embedding: list[float] | None = None):
+    async def update_point(self, point_id: str, entry: KnowledgeEntry, embedding: list[float] | None = None):
         self.ensure_collection()
         payload = {
             "title": entry.title,
@@ -159,13 +168,15 @@ class QdrantService:
             "tags": entry.tags,
             "source_url": entry.source_url,
         }
-        self.client.set_payload(
+        await _run_sync(
+            self.client.set_payload,
             collection_name=self.collection_name,
             payload=payload,
             points=[point_id],
         )
         if embedding:
-            self.client.update_vectors(
+            await _run_sync(
+                self.client.update_vectors,
                 collection_name=self.collection_name,
                 points=[models.PointStruct(id=point_id, vector=embedding, payload={})],
             )
@@ -177,9 +188,10 @@ class QdrantService:
         except Exception:
             return 0
 
-    def delete_point(self, point_id: str):
+    async def delete_point(self, point_id: str):
         self.ensure_collection()
-        self.client.delete(
+        await _run_sync(
+            self.client.delete,
             collection_name=self.collection_name,
             points_selector=models.PointIdsList(points=[point_id]),
         )
