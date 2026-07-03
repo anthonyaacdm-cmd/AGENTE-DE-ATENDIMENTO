@@ -10,6 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from app.core.config import settings
 from app.services.qdrant_service import qdrant_service
+from app.services.reranker import rerank
 from app.utils import strip_pii as _strip_pii
 from app.models.schemas import (
     ConversationTurn, GenerateResponse,
@@ -31,6 +32,7 @@ Regras:
 - Inclua informações específicas quando disponíveis
 - Se não houver informação suficiente, sugira perguntar ao setor responsável
 - NÃO invente informações. Se não souber, diga que não tem essa informação.
+- Se a resposta usar a base de conhecimento, cite a fonte entre colchetes ao final, ex: [Fonte: Nome do documento]
 
 Conhecimento relevante:
 {knowledge_context}
@@ -204,11 +206,41 @@ class RAGService:
         except Exception:
             return "neutro"
 
+    async def _summarize_old_turns(self, turns: list[ConversationTurn]) -> str:
+        if len(turns) <= 10:
+            return self._format_conversation(turns)
+        old = turns[:-6]
+        recent = turns[-6:]
+        old_text = self._format_conversation(old)
+        try:
+            prompt = f"Resuma o histórico abaixo em 2-3 frases, mantendo apenas fatos relevantes:\n{old_text}\nResumo:"
+            result = await self.llm.ainvoke(prompt)
+            summary = result.content.strip()[:500]
+            recent_text = self._format_conversation(recent)
+            return f"Resumo de conversas anteriores:\n{summary}\n\nMensagens recentes:\n{recent_text}"
+        except Exception:
+            return self._format_conversation(turns)
+
+    async def _web_search_fallback(self, query: str) -> list[dict]:
+        try:
+            from duckduckgo_search import DDGS
+            results = []
+            with DDGS() as ddgs:
+                for i, r in enumerate(ddgs.text(query, max_results=3)):
+                    results.append({"title": r.get("title", ""), "body": r.get("body", ""), "href": r.get("href", "")})
+            return results
+        except ImportError:
+            logger.warning("duckduckgo_search not installed; skipping web fallback")
+            return []
+        except Exception as e:
+            logger.warning(f"Web search error: {e}")
+            return []
+
     async def generate_response(
         self, conversation: list[ConversationTurn], ticket_title: str = "",
         attachment_text: str = "", conversation_id: Optional[str] = None,
     ) -> GenerateResponse:
-        conversation_text = self._format_conversation(conversation)
+        conversation_text = await self._summarize_old_turns(conversation)
         combined_text = f"{ticket_title}\n{conversation_text}" if ticket_title else conversation_text
         combined_text = _strip_pii(combined_text)
 
@@ -217,16 +249,36 @@ class RAGService:
         sentiment = await self._detect_sentiment(last_message)
 
         qdrant_ok = qdrant_service.is_ready()
+        knowledge_results = []
+        web_results = []
         if qdrant_ok and self._ready:
             try:
                 query_embedding = await self.embeddings.aembed_query(combined_text)
-                knowledge_results = await qdrant_service.search(query_embedding, limit=5)
+                knowledge_results = await qdrant_service.search_hybrid(query_embedding, combined_text, limit=15)
             except Exception:
-                knowledge_results = []
-        else:
-            knowledge_results = []
+                try:
+                    query_embedding = await self.embeddings.aembed_query(combined_text)
+                    knowledge_results = await qdrant_service.search(query_embedding, limit=15)
+                except Exception:
+                    knowledge_results = []
+
+            if knowledge_results:
+                reranked = rerank(combined_text, [(r.title, r.content) for r in knowledge_results])
+                if reranked is not None:
+                    for i, score in enumerate(reranked):
+                        if i < len(knowledge_results):
+                            knowledge_results[i].score = float(score)
+                    knowledge_results.sort(key=lambda x: -x.score)
+                knowledge_results = [r for r in knowledge_results if r.score > 0][:5]
+
+            if not knowledge_results:
+                web_results = await self._web_search_fallback(last_message)
 
         knowledge_context = self._format_knowledge(knowledge_results)
+        if web_results:
+            web_parts = [f"[Web] {r['title']}: {r['body']}" for r in web_results]
+            knowledge_context += "\n\n---\n\nResultados da web:\n" + "\n\n".join(web_parts)
+
         attachment_context = attachment_text if attachment_text else "Nenhum anexo."
 
         sentiment_note = ""
@@ -274,10 +326,15 @@ class RAGService:
             if knowledge_results else 0.0
         )
 
+        sources = []
+        for r in knowledge_results:
+            if r.score > 0.3:
+                sources.append(f"{r.title} [{r.category}]")
+
         return GenerateResponse(
             suggested_response=response.strip(),
-            sources=[r.title for r in knowledge_results if r.score > 0.5],
-            confidence=round(avg_score, 4),
+            sources=sources,
+            confidence=round(min(avg_score, 1.0), 4),
             conversation_id=conversation_id,
             intent=intent,
             sentiment=sentiment,

@@ -183,9 +183,18 @@ async def add_knowledge(entry: KnowledgeEntry, _=Depends(require_api_key)):
         raise HTTPException(status_code=503, detail="IA não configurada")
 
     try:
-        embedding = await rag_service.embeddings.aembed_query(entry.content)
-        point_id = await qdrant_service.upsert_knowledge(entry, embedding)
-        return KnowledgeCreateResponse(id=point_id, message="Conhecimento adicionado com sucesso")
+        from app.services.chunker import chunk_text
+        chunks = chunk_text(entry.content)
+        if len(chunks) > 1:
+            for i, chunk in enumerate(chunks):
+                chunk_entry = entry.model_copy(update={"id": None, "content": chunk, "title": f"{entry.title} (parte {i+1})"})
+                embedding = await rag_service.embeddings.aembed_query(chunk)
+                await qdrant_service.upsert_knowledge(chunk_entry, embedding)
+            return KnowledgeCreateResponse(id=entry.title, message=f"Conhecimento dividido em {len(chunks)} partes")
+        else:
+            embedding = await rag_service.embeddings.aembed_query(entry.content)
+            point_id = await qdrant_service.upsert_knowledge(entry, embedding)
+            return KnowledgeCreateResponse(id=point_id, message="Conhecimento adicionado com sucesso")
     except Exception as e:
         logger.error(f"Knowledge add error: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))

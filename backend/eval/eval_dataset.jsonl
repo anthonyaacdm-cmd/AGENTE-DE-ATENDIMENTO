@@ -1,0 +1,10 @@
+{"id": "q1", "question": "Qual o prazo de matrícula para 2026.2?", "expected_answer": "O período de matrícula para o semestre 2026.2 vai de 01 a 15 de agosto de 2026.", "category": "matricula"}
+{"id": "q2", "question": "Quanto custa a taxa de matrícula?", "expected_answer": "A taxa de matrícula é de R$ 150,00.", "category": "matricula"}
+{"id": "q3", "question": "Tem multa para matrícula fora do prazo?", "expected_answer": "Sim, matrículas fora do prazo pagam multa de R$ 50,00.", "category": "matricula"}
+{"id": "q4", "question": "Quando começa o semestre 2026.2?", "expected_answer": "O semestre 2026.2 inicia em 01 de setembro.", "category": "academico"}
+{"id": "q5", "question": "Qual a data das provas finais?", "expected_answer": "As provas finais são de 10 a 20 de dezembro.", "category": "academico"}
+{"id": "q6", "question": "Como solicitar bolsa de mérito acadêmico?", "expected_answer": "Alunos com média geral acima de 8,5 podem solicitar bolsa de mérito acadêmico com 50% de desconto.", "category": "financeiro"}
+{"id": "q7", "question": "Quanto custa a segunda via do diploma?", "expected_answer": "A segunda via do diploma custa R$ 200,00.", "category": "secretaria"}
+{"id": "q8", "question": "Qual o prazo para emissão da segunda via do diploma?", "expected_answer": "O prazo de emissão é de 30 dias úteis.", "category": "secretaria"}
+{"id": "q9", "question": "Quanto custa o histórico escolar?", "expected_answer": "A taxa do histórico escolar é R$ 30,00 por via.", "category": "secretaria"}
+{"id": "q10", "question": "Tem isenção para histórico escolar?", "expected_answer": "Sim, alunos carentes têm isenção da taxa do histórico escolar mediante comprovante.", "category": "secretaria"}

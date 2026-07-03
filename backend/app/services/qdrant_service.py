@@ -50,6 +50,24 @@ class QdrantService:
                         distance=models.Distance.COSINE,
                     ),
                 )
+            try:
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="content",
+                    field_type=models.PayloadSchemaType.TEXT,
+                )
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="title",
+                    field_type=models.PayloadSchemaType.KEYWORD,
+                )
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="category",
+                    field_type=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
             self._ready = True
         except Exception as e:
             print(f"[Qdrant] Connection failed (server may be starting): {e}")
@@ -79,6 +97,77 @@ class QdrantService:
             ],
         )
         return point_id
+
+    async def search_hybrid(self, query_embedding: list[float], query_text: str, limit: int = 10) -> list[KnowledgeSearchResult]:
+        self.ensure_collection()
+        if not self._ready:
+            return []
+        try:
+            vector_results = await _run_sync(
+                self.client.query_points,
+                collection_name=self.collection_name,
+                query=query_embedding,
+                limit=limit,
+                with_payload=True,
+            )
+            from app.services.chunker import chunk_text
+            text_results = []
+            if query_text.strip():
+                scroll = await _run_sync(
+                    self.client.scroll,
+                    collection_name=self.collection_name,
+                    limit=200,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                query_lower = query_text.lower()
+                query_terms = set(query_lower.split())
+                scored = []
+                for p in scroll[0]:
+                    content = (p.payload.get("content", "") or "").lower()
+                    title = (p.payload.get("title", "") or "").lower()
+                    score = 0
+                    for term in query_terms:
+                        if len(term) < 3:
+                            continue
+                        if term in content:
+                            score += content.count(term) * 0.05
+                        if term in title:
+                            score += 2
+                    if score > 0:
+                        scored.append((score, p))
+                scored.sort(key=lambda x: -x[0])
+                text_results = scored[:limit]
+
+            seen_ids = set()
+            combined = []
+            for res in vector_results.points:
+                rid = str(res.id)
+                if rid not in seen_ids:
+                    seen_ids.add(rid)
+                    combined.append(KnowledgeSearchResult(
+                        id=rid,
+                        title=res.payload.get("title", ""),
+                        content=res.payload.get("content", ""),
+                        score=res.score,
+                        category=res.payload.get("category", ""),
+                    ))
+            for score, p in text_results:
+                pid = str(p.id)
+                if pid not in seen_ids:
+                    seen_ids.add(pid)
+                    combined.append(KnowledgeSearchResult(
+                        id=pid,
+                        title=p.payload.get("title", ""),
+                        content=p.payload.get("content", ""),
+                        score=score * 0.5,
+                        category=p.payload.get("category", ""),
+                    ))
+            combined.sort(key=lambda x: -x.score)
+            return combined[:limit]
+        except Exception as e:
+            print(f"[Qdrant] Hybrid search error: {e}")
+            return []
 
     async def search(self, query_embedding: list[float], limit: int = 5) -> list[KnowledgeSearchResult]:
         self.ensure_collection()
