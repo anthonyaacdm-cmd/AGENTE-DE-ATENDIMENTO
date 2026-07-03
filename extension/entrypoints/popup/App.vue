@@ -51,6 +51,7 @@ const conversationText = ref("");
 const ticketTitle = ref("");
 const useStream = ref(false);
 const streamContent = ref("");
+const darkMode = ref(false);
 
 const incomingAttachmentText = ref("");
 
@@ -96,9 +97,15 @@ const sentimentLabels: Record<string, string> = {
 };
 
 onMounted(async () => {
-  const saved = await browser.storage.local.get(["serverUrl", "apiKey"]);
+  const saved = await browser.storage.local.get(["serverUrl", "apiKey", "darkMode"]);
   if (saved.serverUrl) serverUrl.value = saved.serverUrl;
   if (saved.apiKey) apiKey.value = saved.apiKey;
+  if (saved.darkMode !== undefined) {
+    darkMode.value = saved.darkMode;
+  } else {
+    darkMode.value = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  if (darkMode.value) document.documentElement.classList.add("dark");
   checkHealth();
 });
 
@@ -484,6 +491,11 @@ async function saveServerUrl() {
   await browser.runtime.sendMessage({ type: "SET_API_KEY", apiKey: apiKey.value });
   checkHealth();
 }
+
+function toggleDarkMode() {
+  document.documentElement.classList.toggle("dark", darkMode.value);
+  browser.storage.local.set({ darkMode: darkMode.value });
+}
 </script>
 
 <template>
@@ -756,6 +768,13 @@ Atendente: Claro, como posso ajudar?'
         </div>
         <p v-else class="err">Não foi possível conectar</p>
         <button class="btn-sm" @click="checkHealth">Verificar novamente</button>
+      </div>
+
+      <div class="field" style="margin-top: 16px;">
+        <label>
+          <input type="checkbox" v-model="darkMode" @change="toggleDarkMode" />
+          Modo escuro
+        </label>
       </div>
     </div>
   </div>
@@ -1340,5 +1359,45 @@ h3 {
   color: #0f172a;
   max-height: 200px;
   overflow-y: auto;
+}
+
+:global(.dark) .app,
+:global(.dark).app {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+:global(.dark) .tab-content {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+:global(.dark) input,
+:global(.dark) textarea,
+:global(.dark) select {
+  background: #334155;
+  color: #e2e8f0;
+  border-color: #475569;
+}
+
+:global(.dark) .knowledge-card {
+  background: #334155;
+  border-color: #475569;
+}
+
+:global(.dark) .status-card {
+  background: #334155;
+  border-color: #475569;
+}
+
+:global(.dark) .tag {
+  background: #475569;
+  color: #e2e8f0;
+}
+
+:global(.dark) .stream-box {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #475569;
 }
 </style>

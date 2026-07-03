@@ -125,3 +125,31 @@ class TestFeedbackValidation:
             "conversation_id": "c1", "response_text": "ok", "rating": "bom"
         })
         assert resp.status_code == 422
+
+
+class TestKnowledgeVersions:
+    def test_versions_nonexistent(self):
+        resp = client.get("/api/v1/knowledge/fake-id/versions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["knowledge_id"] == "fake-id"
+        assert data["versions"] == []
+
+
+class TestRateLimiterDependency:
+    @patch("app.api.routes.rate_limiter.check")
+    def test_rate_limited(self, mock_check):
+        mock_check.return_value = False
+        resp = client.post("/api/v1/generate", json={
+            "conversation": [{"author": "A", "message": "B"}]
+        })
+        assert resp.status_code == 429
+        assert "Muitas" in resp.json()["detail"]
+
+
+class TestChatWidget:
+    def test_chat_widget_html(self):
+        resp = client.get("/chat-widget")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "text/html; charset=utf-8"
+        assert "Agente de Atendimento" in resp.text

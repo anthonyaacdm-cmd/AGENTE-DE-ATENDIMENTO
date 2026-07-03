@@ -3,7 +3,7 @@ import re
 import json
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -77,7 +77,7 @@ class ConversationStore:
 
     def create(self, ticket_title: str = "", platform: str = "") -> ConversationSession:
         session_id = str(uuid.uuid4())[:8]
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         session = ConversationSession(
             id=session_id, created_at=now, updated_at=now,
             turns=[], ticket_title=ticket_title, platform=platform,
@@ -95,7 +95,7 @@ class ConversationStore:
         session.turns.extend(turns)
         if len(session.turns) > settings.max_conversation_turns:
             session.turns = session.turns[-settings.max_conversation_turns:]
-        session.updated_at = datetime.utcnow()
+        session.updated_at = datetime.now(timezone.utc)
         return session
 
 

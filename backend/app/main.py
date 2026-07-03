@@ -1,30 +1,16 @@
 import json
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
+from app.api.chat_widget import router as chat_router
 from app.services.qdrant_service import qdrant_service
 from app.core.config import settings
 
-app = FastAPI(
-    title="Agente de Atendimento API",
-    description="Gerador de respostas inteligente com RAG",
-    version="2.0.0",
-)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(router, prefix="/api/v1")
-
-
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     qdrant_service.ensure_collection()
     has_key = bool(settings.gemini_api_key)
     has_auth = bool(settings.api_key)
@@ -40,6 +26,7 @@ async def startup():
         await _seed_knowledge(seed_path)
     else:
         print(f"[Seed] Base já contém {count} registros. Pulando seed.")
+    yield
 
 
 async def _seed_knowledge(path: str):
@@ -54,6 +41,25 @@ async def _seed_knowledge(path: str):
         print(f"[Seed] {len(entries)} conhecimentos adicionados com sucesso.")
     except Exception as e:
         print(f"[Seed] Erro ao popular base: {e}")
+
+
+app = FastAPI(
+    title="Agente de Atendimento API",
+    description="Gerador de respostas inteligente com RAG",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(router, prefix="/api/v1")
+app.include_router(chat_router)
 
 
 @app.get("/")

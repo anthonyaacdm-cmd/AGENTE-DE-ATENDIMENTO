@@ -11,10 +11,10 @@ class Settings(BaseSettings):
     collection_name: str = "knowledge_base"
     api_key: str = ""
     max_conversation_turns: int = 50
+    rate_limit_per_minute: int = 30
+    redis_url: str = ""
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 settings = Settings()

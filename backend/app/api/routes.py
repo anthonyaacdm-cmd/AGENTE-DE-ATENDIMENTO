@@ -2,7 +2,7 @@ import logging
 import traceback
 import json
 import asyncio
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query, status, Depends, Header
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query, status, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from app.models.schemas import (
     GenerateRequest, GenerateResponse, KnowledgeEntry,
@@ -14,6 +14,8 @@ from app.models.schemas import (
 from app.services.rag_service import rag_service, conversation_store
 from app.services.qdrant_service import qdrant_service
 from app.services.file_extraction import extract_text, is_supported
+from app.services.rate_limiter import rate_limiter
+from app.services.version_store import save_version, list_versions
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -31,12 +33,19 @@ async def optional_api_key(x_api_key: str = Header("")):
         raise HTTPException(status_code=401, detail="API key inválida")
 
 
+async def check_rate_limit(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not rate_limiter.check(client_ip):
+        raise HTTPException(status_code=429, detail="Muitas requisições. Aguarde um minuto.")
+    return True
+
+
 @router.post(
     "/generate",
     response_model=GenerateResponse,
     responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
 )
-async def generate_response(request: GenerateRequest, _=Depends(require_api_key)):
+async def generate_response(request: GenerateRequest, _=Depends(require_api_key), __=Depends(check_rate_limit)):
     if not request.conversation:
         raise HTTPException(status_code=400, detail="Conversa vazia")
 
@@ -143,7 +152,7 @@ async def analyze_page(request: AnalyzePageRequest, _=Depends(require_api_key)):
 @router.post("/feedback")
 async def submit_feedback(feedback: FeedbackRequest, _=Depends(require_api_key)):
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
         import uuid
         entry = {
             "id": str(uuid.uuid4()),
@@ -151,7 +160,7 @@ async def submit_feedback(feedback: FeedbackRequest, _=Depends(require_api_key))
             "response_text": feedback.response_text,
             "rating": feedback.rating,
             "comment": feedback.comment or "",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         import json, os
         fb_path = os.path.join("data", "feedback.jsonl")
@@ -242,6 +251,8 @@ async def update_knowledge(point_id: str, update: KnowledgeUpdateRequest, _=Depe
     else:
         await qdrant_service.update_point(point_id, entry)
 
+    save_version(point_id, entry.title, entry.content, entry.category, entry.tags)
+
     return KnowledgeCreateResponse(id=point_id, message="Conhecimento atualizado com sucesso")
 
 
@@ -276,6 +287,39 @@ async def extract_file_text(file: UploadFile = File(...), _=Depends(require_api_
     except Exception as e:
         logger.error(f"Extract error: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/knowledge/{point_id}/versions")
+async def get_knowledge_versions(point_id: str, _=Depends(optional_api_key)):
+    versions = list_versions(point_id)
+    return {"knowledge_id": point_id, "versions": versions}
+
+
+@router.post("/knowledge/import-url")
+async def import_knowledge_from_url(url: str = Query(...), category: str = "geral", _=Depends(require_api_key)):
+    if not rag_service.is_ready():
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        text = resp.text[:15000]
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        clean_text = soup.get_text(separator="\n", strip=True)[:10000]
+        title = soup.title.string.strip() if soup.title and soup.title.string else url
+        entry = KnowledgeEntry(title=title[:200], content=clean_text, category=category, source_url=url)
+        embedding = await rag_service.embeddings.aembed_query(entry.content)
+        point_id = await qdrant_service.upsert_knowledge(entry, embedding)
+        return {"id": point_id, "title": title[:200], "content_preview": clean_text[:300]}
+    except ImportError:
+        raise HTTPException(status_code=500, detail="BeautifulSoup não instalado. Execute: pip install beautifulsoup4")
+    except Exception as e:
+        logger.error(f"Import URL error: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao importar URL: {e}")
 
 
 @router.get("/health")
