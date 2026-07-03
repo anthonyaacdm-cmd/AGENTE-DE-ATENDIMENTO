@@ -100,6 +100,15 @@ class AnalyzePageRequest(BaseModel):
     title: str
     text: str
     html: Optional[str] = ""
+    structured: Optional[dict] = None
+    screenshot: Optional[str] = None
+
+
+class KnowledgeMatch(BaseModel):
+    title: str
+    category: str
+    score: float
+    content_preview: str
 
 
 class AnalyzePageResponse(BaseModel):
@@ -108,6 +117,12 @@ class AnalyzePageResponse(BaseModel):
     key_points: List[str] = []
     suggested_knowledge_title: Optional[str] = None
     suggested_knowledge_category: Optional[str] = None
+    page_type: Optional[str] = None
+    entities: List[str] = []
+    intent: Optional[str] = None
+    sentiment: Optional[str] = None
+    knowledge_matches: List[KnowledgeMatch] = []
+    suggested_actions: List[str] = []
 
 
 class ConversationSession(BaseModel):

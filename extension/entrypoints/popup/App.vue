@@ -496,6 +496,13 @@ function toggleDarkMode() {
   document.documentElement.classList.toggle("dark", darkMode.value);
   browser.storage.local.set({ darkMode: darkMode.value });
 }
+
+async function openSidepanel() {
+  try {
+    await browser.runtime.sendMessage({ type: "OPEN_SIDEPANEL" });
+    window.close();
+  } catch {}
+}
 </script>
 
 <template>
@@ -775,6 +782,11 @@ Atendente: Claro, como posso ajudar?'
           <input type="checkbox" v-model="darkMode" @change="toggleDarkMode" />
           Modo escuro
         </label>
+      </div>
+
+      <div class="sidebar-note">
+        <p>💡 Use o <strong>sidepanel</strong> para analisar páginas automaticamente:</p>
+        <button class="btn-primary" @click="openSidepanel">Abrir Sidepanel</button>
       </div>
     </div>
   </div>
@@ -1399,5 +1411,19 @@ h3 {
   background: #1e293b;
   color: #e2e8f0;
   border-color: #475569;
+}
+
+.sidebar-note {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.sidebar-note p {
+  margin-bottom: 8px;
 }
 </style>

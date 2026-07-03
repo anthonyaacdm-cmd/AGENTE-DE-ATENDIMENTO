@@ -9,7 +9,7 @@ from app.models.schemas import (
     KnowledgeSearchResult, KnowledgeCreateResponse, ErrorResponse,
     KnowledgeListResponse, KnowledgeDetail, KnowledgeUpdateRequest,
     ExtractTextResponse, FeedbackRequest, AnalyzePageRequest,
-    AnalyzePageResponse,
+    AnalyzePageResponse, KnowledgeMatch,
 )
 from app.services.rag_service import rag_service, conversation_store
 from app.services.qdrant_service import qdrant_service
@@ -142,6 +142,8 @@ async def analyze_page(request: AnalyzePageRequest, _=Depends(require_api_key)):
             title=request.title,
             text=request.text,
             html=request.html or "",
+            structured=request.structured,
+            screenshot=request.screenshot,
         )
         return result
     except Exception as e:

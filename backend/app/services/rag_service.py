@@ -15,6 +15,7 @@ from app.utils import strip_pii as _strip_pii
 from app.models.schemas import (
     ConversationTurn, GenerateResponse,
     ConversationSession, AnalyzePageResponse,
+    KnowledgeMatch,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,27 +44,48 @@ Histórico da conversa:
 Conteúdo extraído de anexo:
 {attachment_context}"""
 
-ANALYZE_PROMPT = """Você é um assistente que analisa páginas web de plataformas de atendimento.
+ANALYZE_PROMPT = """Você é um assistente especializado em análise profunda de páginas de plataformas de atendimento ao cliente.
 
-Analise o conteúdo abaixo e extraia:
-1. Um resumo conciso do que se trata a página
-2. Principais tópicos abordados
-3. Pontos-chave importantes
-4. Uma sugestão de título e categoria para adicionar este conteúdo à base de conhecimento
+Analise o conteúdo abaixo com atenção aos detalhes e extraia o máximo de informação possível.
 
-Conteúdo da página ({content_type}):
-Título: {page_title}
-URL: {page_url}
+Contexto da página:
+- Título: {page_title}
+- URL: {page_url}
+- Tipo: {content_type}
 
+Conteúdo textual:
 {page_text}
 
-Responda APENAS em JSON no formato:
+Dados estruturados da página:
+{structured_data}
+
+Conhecimento relacionado encontrado na base:
+{knowledge_context}
+
+Instruções:
+1. Faça um resumo CONCISO mas COMPLETO do que se trata a página
+2. Identifique os principais tópicos abordados (máx 8)
+3. Liste pontos-chave importantes e dados específicos (nomes, prazos, valores, protocolos)
+4. Classifique o TIPO da página (ex: ticket_atendimento, chat_transcricao, faq, artigo_conhecimento, formulario, painel_admin, perfil_usuario, lista_processos, dashboard, erro, outro)
+5. Extraia entidades mencionadas: nomes de pessoas, departamentos, números de protocolo, valores, datas, cursos, disciplinas
+6. Classifique a intenção principal da página (ex: duvida_matricula, problema_financeiro, suporte_tecnico, informacao_academica, reclamacao, solicitacao_documento, cancelamento, consulta, outro)
+7. Classifique o sentimento/tonalidade predominante (positivo, neutro, negativo, irritado, urgente)
+8. Sugira ações que o atendente deve tomar com base no conteúdo
+9. Sugira um título e categoria para adicionar à base de conhecimento (se relevante)
+10. Conhecimentos relacionados: mencione os títulos da base que são relevantes para esta página
+
+Responda APENAS em JSON válido, sem markdown:
 {{
-  "summary": "resumo aqui",
+  "summary": "resumo completo e detalhado",
   "topics": ["tópico1", "tópico2"],
-  "key_points": ["ponto1", "ponto2"],
-  "suggested_knowledge_title": "título sugerido",
-  "suggested_knowledge_category": "categoria sugerida"
+  "key_points": ["ponto específico 1", "ponto específico 2"],
+  "page_type": "ticket_atendimento",
+  "entities": ["Nome: João Silva", "Protocolo: #12345", "Departamento: Financeiro"],
+  "intent": "problema_financeiro",
+  "sentiment": "negativo",
+  "suggested_actions": ["Ação 1", "Ação 2"],
+  "suggested_knowledge_title": "Título sugerido",
+  "suggested_knowledge_category": "categoria"
 }}"""
 
 INTENT_CATEGORIES = [
@@ -340,12 +362,62 @@ class RAGService:
             sentiment=sentiment,
         )
 
-    async def analyze_page(self, url: str, title: str, text: str, html: str = "") -> AnalyzePageResponse:
+    async def analyze_page(self, url: str, title: str, text: str, html: str = "",
+                           structured: Optional[dict] = None, screenshot: Optional[str] = None) -> AnalyzePageResponse:
         if not self._ready:
             return AnalyzePageResponse(summary="IA não configurada.", topics=[], key_points=[])
 
         content_type = "página web"
-        text_preview = text[:8000]
+        text_preview = text[:12000]
+
+        structured_text = ""
+        if structured:
+            parts = []
+            if structured.get("forms"):
+                for f in structured["forms"]:
+                    inputs = "; ".join(f"{i.get('label','')} ({i.get('type','')}): {i.get('value','')}" for i in f["inputs"])
+                    parts.append(f"Formulário: {inputs}")
+            if structured.get("tables"):
+                for t in structured["tables"]:
+                    h = ", ".join(t.get("headers", []))
+                    rows = "; ".join(" | ".join(r) for r in t.get("rows", [])[:5])
+                    parts.append(f"Tabela: {h} | Dados: {rows}")
+            if structured.get("alerts"):
+                parts.append(f"Alertas: {'; '.join(a['text'] for a in structured['alerts'])}")
+            if structured.get("buttons"):
+                parts.append(f"Botões: {'; '.join(b['text'] for b in structured['buttons'][:15])}")
+            if structured.get("cards"):
+                cards = [c["title"] + ": " + c["text"][:200] for c in structured["cards"][:10]]
+                parts.append(f"Cards: {'; '.join(cards)}")
+            if structured.get("user_info"):
+                parts.append(f"Usuário: {'; '.join(structured['user_info'])}")
+            if structured.get("breadcrumbs"):
+                parts.append(f"Navegação: {' > '.join(structured['breadcrumbs'])}")
+            if structured.get("tabs_found"):
+                parts.append(f"Abas: {'; '.join(structured['tabs_found'])}")
+            if structured.get("badges"):
+                parts.append(f"Status/Badges: {'; '.join(structured['badges'])}")
+            if structured.get("selects"):
+                sel = [f"{s.get('name','')}={s.get('value','')}" for s in structured["selects"]]
+                parts.append(f"Seleções: {'; '.join(sel)}")
+            structured_text = "\n".join(parts)
+
+        knowledge_context = "Nenhum conhecimento relacionado encontrado."
+        knowledge_matches = []
+        if qdrant_service.is_ready():
+            try:
+                query_embedding = await self.embeddings.aembed_query(f"{title} {text[:3000]}")
+                results = await qdrant_service.search_hybrid(query_embedding, text[:3000], limit=5)
+                if results:
+                    formatted = self._format_knowledge(results)
+                    knowledge_context = formatted if formatted else knowledge_context
+                    knowledge_matches = [
+                        KnowledgeMatch(title=r.title, category=r.category, score=round(float(r.score), 3),
+                                       content_preview=r.content[:200])
+                        for r in results[:5] if r.score > 0.2
+                    ]
+            except Exception:
+                pass
 
         try:
             result = await self.llm.ainvoke(
@@ -354,6 +426,8 @@ class RAGService:
                     page_title=title,
                     page_url=url,
                     page_text=text_preview,
+                    structured_data=structured_text or "Nenhum dado estruturado encontrado.",
+                    knowledge_context=knowledge_context,
                 )
             )
             raw = result.content.strip()
@@ -366,12 +440,20 @@ class RAGService:
                 key_points=data.get("key_points", []),
                 suggested_knowledge_title=data.get("suggested_knowledge_title"),
                 suggested_knowledge_category=data.get("suggested_knowledge_category"),
+                page_type=data.get("page_type", "outro"),
+                entities=data.get("entities", []),
+                intent=data.get("intent"),
+                sentiment=data.get("sentiment"),
+                knowledge_matches=knowledge_matches,
+                suggested_actions=data.get("suggested_actions", []),
             )
         except Exception as e:
             logger.error(f"Page analysis error: {e}")
             return AnalyzePageResponse(
                 summary="Não foi possível analisar a página.",
                 topics=[], key_points=[],
+                page_type="outro",
+                knowledge_matches=knowledge_matches,
             )
 
 

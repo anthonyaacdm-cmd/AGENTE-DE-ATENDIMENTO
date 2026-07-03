@@ -21,6 +21,35 @@ export default defineBackground({
       }
     });
 
+    chrome.action.onClicked.addListener(async (tab) => {
+      const windowId = tab.windowId || (await chrome.windows.getCurrent()).id;
+      chrome.sidePanel.open({ windowId });
+    });
+
+    chrome.runtime.onInstalled.addListener(() => {
+      chrome.contextMenus.create({
+        id: "analyze-selection",
+        title: "Analisar com Agente de Atendimento",
+        contexts: ["selection"],
+      });
+      chrome.contextMenus.create({
+        id: "analyze-page",
+        title: "Analisar página com Agente de Atendimento",
+        contexts: ["page"],
+      });
+    });
+
+    chrome.contextMenus.onClicked.addListener((info, tab) => {
+      if (info.menuItemId === "analyze-selection" && info.selectionText && tab?.id) {
+        chrome.storage.local.set({ pendingAnalysis: info.selectionText });
+        chrome.sidePanel.open({ windowId: tab.windowId });
+      }
+      if (info.menuItemId === "analyze-page" && tab?.id) {
+        chrome.storage.local.set({ pendingAnalysis: "__page__" });
+        chrome.sidePanel.open({ windowId: tab.windowId });
+      }
+    });
+
     browser.runtime.onMessage.addListener(async (message: any) => {
       switch (message.type) {
         case "GENERATE_RESPONSE":
@@ -57,6 +86,8 @@ export default defineBackground({
           return handleCaptureScreenshot();
         case "SUBMIT_FEEDBACK":
           return handleSubmitFeedback(message.payload);
+        case "OPEN_SIDEPANEL":
+          return handleOpenSidepanel();
         default:
           return { error: "unknown_type" };
       }
@@ -194,29 +225,122 @@ async function handleFetchPageText() {
           if (name && content) metadata[name] = content.slice(0, 500);
         });
 
-        const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
-          .map(h => h.tagName + ': ' + (h.textContent || '').trim())
+        const structured: Record<string, any> = {};
+
+        structured.forms = Array.from(document.querySelectorAll('form')).map(f => ({
+          action: f.action,
+          method: f.method,
+          inputs: Array.from(f.querySelectorAll('input, select, textarea')).map(el => {
+            const field = el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+            const label = f.querySelector(`label[for="${field.id}"]`)?.textContent?.trim()
+              || field.closest('.field, .form-group, .mb-3')?.querySelector('label')?.textContent?.trim()
+              || field.placeholder || '';
+            return {
+              name: field.name || field.id,
+              type: (field as HTMLInputElement).type || field.tagName.toLowerCase(),
+              value: field.value?.slice(0, 500) || '',
+              label: label.slice(0, 200),
+            };
+          }),
+        })).filter(f => f.inputs.length > 0);
+
+        structured.tables = Array.from(document.querySelectorAll('table')).slice(0, 10).map(t => ({
+          caption: t.querySelector('caption')?.textContent?.trim() || '',
+          headers: Array.from(t.querySelectorAll('thead th, thead td')).map(h => h.textContent?.trim() || ''),
+          rows: Array.from(t.querySelectorAll('tbody tr, tr')).slice(0, 30).map(row =>
+            Array.from(row.querySelectorAll('td, th')).map(cell => cell.textContent?.trim() || '').slice(0, 8)
+          ).filter(r => r.length > 0),
+        })).filter(t => t.rows.length > 0);
+
+        structured.buttons = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"], a.btn'))
+          .map(b => ({
+            text: (b.textContent || (b as HTMLInputElement).value || '').trim().slice(0, 100),
+            type: (b as HTMLElement).tagName === 'BUTTON' ? 'button' : 'link',
+          }))
+          .filter(b => b.text)
           .slice(0, 30);
+
+        structured.alerts = Array.from(document.querySelectorAll(
+          '.alert, .error, .success, .warning, .toast, [class*="error"], [class*="alert"], [class*="notification"], ' +
+          '[class*="toast"], [class*="message"], [class*="feedback"], .invalid-feedback, .text-danger'
+        )).map(a => ({
+          text: (a.textContent || '').trim().slice(0, 300),
+          class: a.className?.slice(0, 100) || '',
+        })).filter(a => a.text);
+
+        structured.lists = Array.from(document.querySelectorAll('ul, ol')).slice(0, 10).map(l => ({
+          type: l.tagName,
+          items: Array.from(l.querySelectorAll('li')).map(li => li.textContent?.trim().slice(0, 200) || '').filter(Boolean),
+        })).filter(l => l.items.length > 0);
+
+        const structuredData: Record<string, any>[] = [];
+        for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+          try { structuredData.push(JSON.parse(script.textContent || '{}')); } catch {}
+        }
+
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4'))
+          .map(h => h.tagName + ': ' + (h.textContent || '').trim())
+          .slice(0, 40);
 
         const links = Array.from(document.querySelectorAll('a[href]'))
           .map(a => ({ text: (a.textContent || '').trim(), href: (a as HTMLAnchorElement).href }))
           .filter(l => l.text)
           .slice(0, 50);
 
+        structured.selects = Array.from(document.querySelectorAll('select')).slice(0, 20).map(s => ({
+          name: s.name || s.id,
+          value: s.value || '',
+          options: Array.from(s.selectedOptions).map(o => o.text?.trim() || '').slice(0, 5),
+        }));
+
+        structured.cards = Array.from(document.querySelectorAll(
+          '.card, [class*="card"], .panel, [class*="panel"], .ticket, .ticket-item'
+        )).slice(0, 20).map(c => ({
+          title: c.querySelector('.card-title, h3, h4, h5, .title, [class*="title"]')?.textContent?.trim()?.slice(0, 150) || '',
+          text: (c.textContent || '').trim().slice(0, 500),
+          class: c.className?.slice(0, 60) || '',
+        })).filter(c => c.text);
+
+        structured.breadcrumbs = Array.from(document.querySelectorAll(
+          '.breadcrumb li, [class*="breadcrumb"] li, nav[aria-label*="breadcrumb"] li'
+        )).map(b => b.textContent?.trim() || '').filter(Boolean).slice(0, 10);
+
+        structured.tabs_found = Array.from(document.querySelectorAll(
+          '.nav-tabs .nav-link, .tab a, [role="tab"], [class*="tab-header"]'
+        )).map(t => t.textContent?.trim() || '').filter(Boolean).slice(0, 20);
+
+        structured.badges = Array.from(document.querySelectorAll(
+          '.badge, .tag, [class*="badge"], [class*="status"], [class*="label-info"]'
+        )).map(b => b.textContent?.trim() || '').filter(Boolean).slice(0, 15);
+
+        structured.user_info = (() => {
+          const userEls = document.querySelectorAll(
+            '.user-name, .profile-name, [class*="user-name"], [class*="profile-name"], ' +
+            '.user-info, [class*="user-info"], [data-user], .nav-user'
+          );
+          const texts = Array.from(userEls).map(el => (el as HTMLElement).innerText?.trim().slice(0, 200)).filter(Boolean);
+          const avatarAlt = Array.from(document.querySelectorAll(
+            'img.avatar, img[class*="avatar"], img[class*="profile"]'
+          )).map(img => (img as HTMLImageElement).alt).filter(Boolean);
+          return [...texts, ...avatarAlt].slice(0, 5);
+        })();
+
         return {
           title: document.title,
           url: window.location.href,
-          text: document.body?.innerText?.slice(0, 15000) || "",
+          text: document.body?.innerText?.slice(0, 20000) || "",
           metadata,
+          structured,
+          structuredData,
           headings,
           links,
         };
       },
     });
 
-    return results[0]?.result || { title: "", url: "", text: "", metadata: {}, headings: [], links: [] };
+    return results[0]?.result || { title: "", url: "", text: "", metadata: {}, structured: {}, structuredData: [], headings: [], links: [] };
   } catch {
-    return { title: "", url: "", text: "", metadata: {}, headings: [], links: [] };
+    return { title: "", url: "", text: "", metadata: {}, structured: {}, structuredData: [], headings: [], links: [] };
   }
 }
 
@@ -287,4 +411,17 @@ async function handleSubmitFeedback(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+async function handleOpenSidepanel() {
+  try {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tab?.windowId) {
+      await chrome.sidePanel.open({ windowId: tab.windowId });
+      return { ok: true };
+    }
+    return { error: "No active tab" };
+  } catch (e: any) {
+    return { error: e.message };
+  }
 }

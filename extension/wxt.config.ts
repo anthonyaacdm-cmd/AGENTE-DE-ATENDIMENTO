@@ -11,12 +11,14 @@ export default defineConfig({
     name: "Agente de Atendimento",
     description: "Gera sugestões de resposta inteligentes para plataformas de atendimento",
     version: "1.0.0",
-    permissions: ["storage", "activeTab", "scripting", "tabs", "alarms"],
+    permissions: ["storage", "activeTab", "scripting", "tabs", "alarms", "sidePanel", "contextMenus"],
     host_permissions: ["https://agente-de-atendimento.onrender.com/*", "<all_urls>"],
     web_accessible_resources: [{ resources: ["*"], matches: ["<all_urls>"] }],
     action: {
       default_title: "Agente de Atendimento",
-      default_popup: "popup.html",
+    },
+    side_panel: {
+      default_path: "sidepanel.html",
     },
   },
 });
